@@ -2398,6 +2398,13 @@ function exportBracketPDF() {
 // MODE MANUEL R16
 // ============================================================
 let r16ManualMode = false;
+let _manualGridExpanded = false;
+
+function toggleManualR16Grid() {
+  if (!isAdmin()) return;
+  _manualGridExpanded = !_manualGridExpanded;
+  renderR16ManualSelectors();
+}
 
 function toggleR16Mode() {
   r16ManualMode = !r16ManualMode;
@@ -2549,82 +2556,114 @@ function renderAnnexCInfo() {
 
 function renderR16ManualSelectors() {
   const cont = document.getElementById('manualR16Content');
-  if (!r16ManualMode) { cont.innerHTML = ''; return; }
+  if (!r16ManualMode) { cont.innerHTML = ''; _manualGridExpanded = false; return; }
 
   const q = getQualifiedTeams();
   const p = profiles[currentProfile] || {};
   const overrides = p.r32ManualOverrides || {};
 
-  // Meilleurs 3es qualifiés
+  // ── Vue utilisateur : notice read-only, pas de menu ──────────
+  if (!isAdmin()) {
+    cont.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:1.2rem">⚙️</span>
+        <div>
+          <div style="font-size:.82rem;font-weight:600;color:var(--text)">Mode Manuel activé</div>
+          <div style="font-size:.75rem;color:var(--text3)">Les appariements du 1/16 sont définis par l'administrateur.</div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // ── Vue admin : accordéon pliable ────────────────────────────
   const best3 = [];
   for (let i = 1; i <= 8; i++) {
     const t = q['3best' + i];
     if (t && t.group) best3.push({ slot: '3best' + i, group: t.group, name: t.name, flag: t.flag });
   }
-
-  // Calcul complet des 16 paires (pour afficher les équipes pures aussi)
   const pairs = computeR32Pairs(q, null);
+  const overrideCount = Object.values(overrides).filter(Boolean).length;
 
-  const grid = document.createElement('div');
-  grid.className = 'manual-r16-grid';
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'background:var(--surface2);border:1px solid var(--gold);border-radius:var(--radius-sm);margin-bottom:16px;overflow:hidden';
 
-  for (let i = 0; i < 16; i++) {
-    const card = document.createElement('div');
-    card.className = 'manual-r16-card';
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;user-select:none';
+  header.onclick = toggleManualR16Grid;
+  header.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="color:var(--gold);font-weight:700;font-size:.88rem">⚙️ Appariements 1/16 de finale</span>
+      <span style="background:${overrideCount > 0 ? 'var(--gold)' : 'var(--surface3)'};color:${overrideCount > 0 ? '#000' : 'var(--text3)'};border-radius:4px;padding:2px 8px;font-size:.7rem;font-weight:700;border:1px solid var(--border)">
+        ${overrideCount > 0 ? overrideCount + ' override' + (overrideCount > 1 ? 's' : '') : 'Annexe C auto'}
+      </span>
+    </div>
+    <span style="font-size:.78rem;color:var(--text3)">${_manualGridExpanded ? '▲ Réduire' : '▶ Gérer les appariements'}</span>
+  `;
+  wrapper.appendChild(header);
 
-    if (R32_PURE[i]) {
-      // Match pur — affichage lecture seule
-      const teamH = q[pairs[i][0]] || { name: pairs[i][0], flag: '❓' };
-      const teamA = q[pairs[i][1]] || { name: pairs[i][1], flag: '❓' };
-      card.innerHTML = `
-        <div class="slot-label"><span class="badge-auto">AUTO</span> Match n°${i + 1}</div>
-        <div class="teams">
-          <div class="team">${flagHTML(teamH.name, teamH.flag)} ${teamH.name}</div>
-          <span class="vs">vs</span>
-          <div class="team">${flagHTML(teamA.name, teamA.flag)} ${teamA.name}</div>
-        </div>
-        <div style="font-size:.68rem;color:var(--text3);margin-top:6px">Paire fixe — règlement FIFA 2026</div>
-      `;
-    } else {
-      // Match mixte — sélecteur du 3e
-      const slotKey = R32_MIXED[i];
-      const fixedTeam = q[slotKey] || { name: slotKey, flag: '❓' };
-      const currentOverride = overrides[slotKey];
-      const isAuto = !currentOverride;
-      const overrideTeam = currentOverride ? best3.find(b => b.slot === currentOverride) : null;
+  if (_manualGridExpanded) {
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:0 16px 16px';
 
-      if (best3.length === 0) {
+    const grid = document.createElement('div');
+    grid.className = 'manual-r16-grid';
+
+    for (let i = 0; i < 16; i++) {
+      const card = document.createElement('div');
+      card.className = 'manual-r16-card';
+
+      if (R32_PURE[i]) {
+        const teamH = q[pairs[i][0]] || { name: pairs[i][0], flag: '❓' };
+        const teamA = q[pairs[i][1]] || { name: pairs[i][1], flag: '❓' };
         card.innerHTML = `
           <div class="slot-label"><span class="badge-auto">AUTO</span> Match n°${i + 1}</div>
           <div class="teams">
-            <div class="team">${flagHTML(fixedTeam.name, fixedTeam.flag)} ${fixedTeam.name}</div>
+            <div class="team">${flagHTML(teamH.name, teamH.flag)} ${teamH.name}</div>
             <span class="vs">vs</span>
-            <div class="team" style="color:var(--text3)">❓ Meilleur 3e (groupes pas encore complets)</div>
+            <div class="team">${flagHTML(teamA.name, teamA.flag)} ${teamA.name}</div>
           </div>
+          <div style="font-size:.68rem;color:var(--text3);margin-top:6px">Paire fixe — règlement FIFA 2026</div>
         `;
       } else {
-        const _adminSelect = isAdmin()
-          ? `<select onchange="saveR16ManualOverride('${slotKey}', this.value)">
+        const slotKey = R32_MIXED[i];
+        const fixedTeam = q[slotKey] || { name: slotKey, flag: '❓' };
+        const currentOverride = overrides[slotKey];
+        const isAuto = !currentOverride;
+        const overrideTeam = currentOverride ? best3.find(b => b.slot === currentOverride) : null;
+
+        if (best3.length === 0) {
+          card.innerHTML = `
+            <div class="slot-label"><span class="badge-auto">AUTO</span> Match n°${i + 1}</div>
+            <div class="teams">
+              <div class="team">${flagHTML(fixedTeam.name, fixedTeam.flag)} ${fixedTeam.name}</div>
+              <span class="vs">vs</span>
+              <div class="team" style="color:var(--text3)">❓ Meilleur 3e (groupes pas encore complets)</div>
+            </div>
+          `;
+        } else {
+          card.innerHTML = `
+            <div class="slot-label">${isAuto ? '<span class="badge-auto">AUTO</span>' : '<span class="badge-manual">MANUEL</span>'} Match n°${i + 1}</div>
+            <div class="teams">
+              <div class="team">${flagHTML(fixedTeam.name, fixedTeam.flag)} ${fixedTeam.name}</div>
+              <span class="vs">vs</span>
+              <div class="team">${overrideTeam ? flagHTML(overrideTeam.name, overrideTeam.flag) + ' ' + overrideTeam.name : '❓ Meilleur 3e (Annexe C)'}</div>
+            </div>
+            <select onchange="saveR16ManualOverride('${slotKey}', this.value)">
               <option value="" ${isAuto ? 'selected' : ''}>🤖 Auto — Annexe C FIFA 2026</option>
               ${best3.map(b => `<option value="${b.slot}" ${currentOverride === b.slot ? 'selected' : ''}>${b.flag} ${b.name} (3e Grp ${b.group})</option>`).join('')}
-            </select>`
-          : `<div style="font-size:.72rem;color:var(--text3);margin-top:6px">${isAuto ? '🤖 Assigné par Annexe C FIFA 2026' : '⚙️ Assigné manuellement par l\'administrateur'}</div>`;
-        card.innerHTML = `
-          <div class="slot-label">${isAuto ? '<span class="badge-auto">AUTO</span>' : '<span class="badge-manual">MANUEL</span>'} Match n°${i + 1}</div>
-          <div class="teams">
-            <div class="team">${flagHTML(fixedTeam.name, fixedTeam.flag)} ${fixedTeam.name}</div>
-            <span class="vs">vs</span>
-            <div class="team">${overrideTeam ? flagHTML(overrideTeam.name, overrideTeam.flag) + ' ' + overrideTeam.name : '❓ Meilleur 3e (Annexe C)'}</div>
-          </div>
-          ${_adminSelect}
-        `;
+            </select>
+          `;
+        }
       }
+      grid.appendChild(card);
     }
-    grid.appendChild(card);
+
+    body.appendChild(grid);
+    wrapper.appendChild(body);
   }
 
   cont.innerHTML = '';
-  cont.appendChild(grid);
+  cont.appendChild(wrapper);
 }
 
 // ============================================================
