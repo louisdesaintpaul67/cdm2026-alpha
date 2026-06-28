@@ -1446,7 +1446,11 @@ function loadAll() {
         if (profiles['real']) profiles['real'].name = '📋 Résultats Réels';
         if (profiles['ia']) profiles['ia'].name = '🤖 Résultat IA';
         if (Array.isArray(d.adminPseudos)) _adminPseudos = d.adminPseudos;
-        if (d.settings) Object.assign(_siteSettings, d.settings);
+        if (d.settings) {
+          const s = Object.assign({}, d.settings);
+          if ('allowRandomGeneration' in s) s.allowRandomGeneration = s.allowRandomGeneration === true || s.allowRandomGeneration === 'true';
+          Object.assign(_siteSettings, s);
+        }
         cleanupUserProfiles();
         saveAll();
         updateProfileUI();
@@ -4713,9 +4717,9 @@ async function renderAdminSettings(cont) {
     html += '<div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em">Mon profil :</div>';
     html += '<p style="font-size:.78rem;color:var(--text3);margin-bottom:10px">Génère des scores réalistes pour les sections non verrouillées de votre propre profil.</p>';
     html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">';
-    html += `<button class="btn-set btn-set-sim" ${_pLock ? 'disabled title="Section verrouillée"' : ''} onclick="generateRandomPredictions()">🎲 Générer (Groupes)</button>`;
-    html += `<button class="btn-set btn-set-sim" ${_kLock ? 'disabled title="Section verrouillée"' : ''} onclick="generateKOScores()">🎲 Générer (Phase finale)</button>`;
-    html += `<button class="btn-set btn-set-sim" ${_bLock ? 'disabled title="Section verrouillée"' : ''} onclick="generateTopScorer()">🎲 Meilleur buteur</button>`;
+    html += `<button class="btn-set btn-set-sim" ${(!_allowGen || _pLock) ? 'disabled' : ''} ${_pLock ? 'title="Section verrouillée"' : (!_allowGen ? 'title="Désactivé"' : '')} onclick="generateRandomPredictions()">🎲 Générer (Groupes)</button>`;
+    html += `<button class="btn-set btn-set-sim" ${(!_allowGen || _kLock) ? 'disabled' : ''} ${_kLock ? 'title="Section verrouillée"' : (!_allowGen ? 'title="Désactivé"' : '')} onclick="generateKOScores()">🎲 Générer (Phase finale)</button>`;
+    html += `<button class="btn-set btn-set-sim" ${(!_allowGen || _bLock) ? 'disabled' : ''} ${_bLock ? 'title="Section verrouillée"' : (!_allowGen ? 'title="Désactivé"' : '')} onclick="generateTopScorer()">🎲 Meilleur buteur</button>`;
     html += '</div>';
 
     // --- Général : toggle ---
