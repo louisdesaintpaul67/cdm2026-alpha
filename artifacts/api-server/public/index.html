@@ -1278,6 +1278,9 @@ let currentGroupTab = 'A';
 let currentStandingsGroup = 'A';
 let activeTab = 'groups';
 
+// Cache pour le calcul du classement (évite O(N²))
+let _lbGoalsCache = null;
+
 // NOUVEAU : defaultProfile inclut les flags de verrou
 function defaultProfile() {
   return {
@@ -3512,10 +3515,10 @@ function computePoints(profileKey) {
   }
 
 // ---------- BONUS ÉCART DE BUTS (MATCHS RÉELS UNIQUEMENT) ----------
-  function computeGoalsOnPlayedMatches(pk) {
+  function _computeGoalsOnPlayed(pk) {
+    if (_lbGoalsCache && _lbGoalsCache.has(pk)) return _lbGoalsCache.get(pk);
     const prof = profiles[pk];
     let total = 0;
-    
     Object.keys(GROUPS).forEach(g => {
       getGroupMatches(g).forEach((_, mi) => {
         const rsc = ref.groupScores?.[g]?.[mi];
@@ -3527,7 +3530,6 @@ function computePoints(profileKey) {
         }
       });
     });
-
     ['r16','r8','r4','r2','final','third_place'].forEach(round => {
       const n = {r16:16, r8:8, r4:4, r2:2, final:1, third_place:1}[round];
       for (let i = 0; i < n; i++) {
@@ -3544,20 +3546,22 @@ function computePoints(profileKey) {
     return total;
   }
 
-  const refGoals = computeTotalGoals('real'); 
-  const playerGoalsOnPlayed = computeGoalsOnPlayedMatches(profileKey);
+  const refGoals = computeTotalGoals('real');
+  const playerGoalsOnPlayed = _computeGoalsOnPlayed(profileKey);
   const currentDiff = Math.abs(playerGoalsOnPlayed - refGoals);
 
   let holdsBestDiff = true;
-  Object.keys(profiles).forEach(k => {
-    if (k !== 'real' && k !== profileKey) {
-      const otherGoalsOnPlayed = computeGoalsOnPlayedMatches(k);
-      const otherDiff = Math.abs(otherGoalsOnPlayed - refGoals);
-      if (otherDiff < currentDiff) {
-        holdsBestDiff = false;
+  if (_lbGoalsCache) {
+    _lbGoalsCache.forEach((goals, k) => {
+      if (k !== profileKey && Math.abs(goals - refGoals) < currentDiff) holdsBestDiff = false;
+    });
+  } else {
+    Object.keys(profiles).forEach(k => {
+      if (k !== 'real' && k !== profileKey) {
+        if (Math.abs(_computeGoalsOnPlayed(k) - refGoals) < currentDiff) holdsBestDiff = false;
       }
-    }
-  });
+    });
+  }
 
   if (holdsBestDiff && refGoals > 0) {
     pts += 10;
@@ -4036,34 +4040,95 @@ function renderBonus() {
   updateBonusStats();
 }
 
+function getFranceStage(profileKey) {
+  const rounds = buildKOTree(profileKey || currentProfile);
+  const T = 'France';
+  function inRound(r) { return (rounds[r]||[]).some(m=>m?.teamH?.name===T||m?.teamA?.name===T); }
+  function wonRound(r) { return (rounds[r]||[]).some(m=>(m?.teamH?.name===T||m?.teamA?.name===T)&&m?.winner?.name===T); }
+  const inFinal = inRound('final');
+  if (inFinal) return wonRound('final') ? '🏆 Vainqueur' : '🥈 Finaliste';
+  const inThird = inRound('third_place');
+  if (inThird) return wonRound('third_place') ? '🥉 3ème place' : '4ème place';
+  if (inRound('r2'))  return '🔴 Demi-finale';
+  if (inRound('r4'))  return '🔴 Quart de finale';
+  if (inRound('r8'))  return '🔴 Huitièmes de finale';
+  if (inRound('r16')) return '🔴 Seizièmes de finale';
+  return '🔴 Phase de groupes';
+}
+
 function updateBonusStats() {
-  const p=profiles[currentProfile];
-  let totalGoals=0, totalMatches=0;
-  Object.keys(GROUPS).forEach(g=>{
-    getGroupMatches(g).forEach((_,mi)=>{
-      const sc=p?.groupScores?.[g]?.[mi];
-      if(sc&&sc.h!==''&&sc.a!==''&&sc.h!==undefined){totalGoals+=parseInt(sc.h,10)+parseInt(sc.a,10);totalMatches++;}
+  const p = profiles[currentProfile];
+  let groupGoals = 0, groupMatches = 0, koGoals = 0, koMatches = 0;
+
+  Object.keys(GROUPS).forEach(g => {
+    getGroupMatches(g).forEach((_, mi) => {
+      const sc = p?.groupScores?.[g]?.[mi];
+      if (sc && sc.h !== '' && sc.a !== '' && sc.h !== undefined) {
+        groupGoals += parseInt(sc.h, 10) + parseInt(sc.a, 10);
+        groupMatches++;
+      }
     });
   });
-  ['r16','r8','r4','r2','final','third_place'].forEach(round=>{
-    const n={r16:16,r8:8,r4:4,r2:2,final:1,third_place:1}[round];
-    for(let i=0;i<n;i++){
-      const id=(round==='final'||round==='third_place')?round:`${round}_${i}`;
-      const sc=p?.koScores?.[id];
-      if(sc&&sc.h!==''&&sc.a!==''&&sc.h!==undefined){totalGoals+=parseInt(sc.h||0,10)+parseInt(sc.a||0,10);totalMatches++;}
+  ['r16','r8','r4','r2','final','third_place'].forEach(round => {
+    const n = {r16:16,r8:8,r4:4,r2:2,final:1,third_place:1}[round];
+    for (let i = 0; i < n; i++) {
+      const id = (round==='final'||round==='third_place') ? round : `${round}_${i}`;
+      const sc = p?.koScores?.[id];
+      if (sc && sc.h !== '' && sc.a !== '' && sc.h !== undefined) {
+        koGoals += parseInt(sc.h||0, 10) + parseInt(sc.a||0, 10);
+        koMatches++;
+      }
     }
   });
-  const rounds=buildKOTree();
-  const champion=rounds.final?.[0]?.winner;
-  document.getElementById('bonusStats').innerHTML=`
-    <div class="stat-card"><div class="stat-value">${totalGoals}</div><div class="stat-label">Buts pronostiqués</div></div>
-    <div class="stat-card"><div class="stat-value">${totalMatches}</div><div class="stat-label">Matchs remplis</div></div>
-    <div class="stat-card">
-      <div style="display:flex;justify-content:center;margin-bottom:4px">${champion?`<img class="flag-img" src="${flagUrl(champion.name)||''}" onerror="this.style.display='none'" style="width:32px;height:24px">`:''}</div>
-      <div class="stat-value" style="font-size:1.1rem">${champion?champion.name:'—'}</div>
-      <div class="stat-label">Champion pronostiqué</div>
+
+  const totalGoals   = groupGoals + koGoals;
+  const totalMatches = groupMatches + koMatches;
+  const avgGoals     = totalMatches > 0 ? (totalGoals / totalMatches).toFixed(1) : '—';
+  const rounds       = buildKOTree();
+  const champion     = rounds.final?.[0]?.winner;
+  const flagHtml     = champion ? `<img class="flag-img" src="${flagUrl(champion.name)||''}" onerror="this.style.display='none'" style="width:26px;height:19px;margin-bottom:2px">` : '';
+  const franceStage  = getFranceStage(currentProfile);
+
+  document.getElementById('bonusStats').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
+        <div class="stat-card">
+          <div class="stat-value" style="font-size:.88rem;line-height:1.3">${p?.topScorer||'—'}</div>
+          <div class="stat-label">⚽ Meilleur buteur</div>
+        </div>
+        <div class="stat-card">
+          <div style="display:flex;justify-content:center">${flagHtml}</div>
+          <div class="stat-value" style="font-size:.88rem;line-height:1.3">${champion?champion.name:'—'}</div>
+          <div class="stat-label">🏆 Vainqueur</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${totalMatches}</div>
+          <div class="stat-label">📋 Matchs pronostiqués</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="font-size:.82rem;line-height:1.3">${franceStage}</div>
+          <div class="stat-label">🇫🇷 Parcours France</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
+        <div class="stat-card">
+          <div class="stat-value">${totalGoals}</div>
+          <div class="stat-label">⚽ Buts totaux</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${groupGoals}</div>
+          <div class="stat-label">Dont phase de groupes</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${koGoals}</div>
+          <div class="stat-label">Dont phase éliminatoire</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${avgGoals}</div>
+          <div class="stat-label">Moy. buts par match</div>
+        </div>
+      </div>
     </div>
-    <div class="stat-card"><div class="stat-value" style="font-size:1rem">${p?.topScorer||'—'}</div><div class="stat-label">Meilleur buteur prévu</div></div>
   `;
 }
 
@@ -4072,11 +4137,13 @@ function renderLeaderboard() {
   const cont=document.getElementById('leaderboardContent');
   const refGoals=computeTotalGoals('real');
 
-  function getGoalsOnPlayed(pk) {
+  // Pré-calcul O(N) des buts sur matchs joués pour éviter O(N²) dans computePoints
+  _lbGoalsCache = new Map();
+  const refProf = profiles['real'];
+  Object.keys(profiles).forEach(pk => {
+    if (pk === 'real') return;
     const prof = profiles[pk];
-    const refProf = profiles['real'];
     let total = 0;
-    
     Object.keys(GROUPS).forEach(g => {
       getGroupMatches(g).forEach((_, mi) => {
         const rsc = refProf?.groupScores?.[g]?.[mi];
@@ -4088,7 +4155,6 @@ function renderLeaderboard() {
         }
       });
     });
-
     ['r16','r8','r4','r2','final','third_place'].forEach(round => {
       const n = {r16:16, r8:8, r4:4, r2:2, final:1, third_place:1}[round];
       for (let i = 0; i < n; i++) {
@@ -4102,8 +4168,8 @@ function renderLeaderboard() {
         }
       }
     });
-    return total;
-  }
+    _lbGoalsCache.set(pk, total);
+  });
 
   const scores=Object.entries(profiles)
     .filter(([k])=>k!=='real')
@@ -4140,6 +4206,7 @@ function renderLeaderboard() {
   }).join('');
 
   cont.innerHTML = rows;
+  _lbGoalsCache = null;
 }
 
 // ============================================================
@@ -4699,7 +4766,7 @@ function renderUserSettings(cont) {
       <button type="button" class="emoji-btn" onclick="settingsSelectEmoji('🗽',this)">🗽</button>
     </div>
     <div style="margin-top:14px">
-      <div class="settings-field-label">Changer le pseudo (identifiant de connexion)</div>
+      <div class="settings-field-label">Changer le pseudo</div>
       <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:4px">
         <input type="text" class="settings-input no-margin" id="settingsNewPseudo" placeholder="Nouveau pseudo..." style="flex:1" />
         <button class="btn-set btn-set-neutral" style="white-space:nowrap" onclick="userChangePseudo()">✅ Changer</button>
