@@ -1181,7 +1181,7 @@
                           • <strong>Groupes :</strong> Bon résultat : <strong>+1 pt</strong> · Score exact : <strong>+3 pts au total</strong><br>
                           • <strong>Phase finale :</strong> Équipe présente au bon tour : <strong>+1/2/4/8/12 pts</strong> selon l'étape<br>
                           • <strong>Bonus Choc (KO) :</strong> Bonne affiche + score exact trouvé : <strong>Points des deux équipes x2</strong><br>
-                          • <strong>Vainqueurs :</strong> Champion juste : <strong>+30 pts</strong> · Meilleure différence de buts : <strong>+10 pts</strong> · Meilleur buteur juste : <strong>+10 pts</strong>
+                          • <strong>Vainqueurs :</strong> Champion juste : <strong>+30 pts</strong> · Meilleur buteur juste : <strong>+10 pts</strong> · Meilleure différence de buts : <strong>+5 pts</strong>
                         </div>
         <div class="card" id="leaderboardCard">
           <div class="card-body" id="leaderboardContent"></div>
@@ -3564,8 +3564,8 @@ function computePoints(profileKey) {
   }
 
   if (holdsBestDiff && refGoals > 0) {
-    pts += 10;
-    bd.bonus += 10;
+    pts += 5;
+    bd.bonus += 5;
   }
 
   // ---------- BUTS (tiebreak) ----------
