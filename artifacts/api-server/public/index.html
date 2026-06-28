@@ -2423,6 +2423,8 @@ function toggleR16Mode() {
 }
 
 function saveR16ManualOverride(slotKey, thirdBestSlot) {
+  if (!isAdmin()) return;
+  if (!profiles[currentProfile]) profiles[currentProfile] = {};
   const p = profiles[currentProfile];
   if (!p.r32ManualOverrides) p.r32ManualOverrides = {};
   if (thirdBestSlot === '') {
@@ -2550,7 +2552,7 @@ function renderR16ManualSelectors() {
   if (!r16ManualMode) { cont.innerHTML = ''; return; }
 
   const q = getQualifiedTeams();
-  const p = profiles[currentProfile];
+  const p = profiles[currentProfile] || {};
   const overrides = p.r32ManualOverrides || {};
 
   // Meilleurs 3es qualifiés
@@ -2601,6 +2603,12 @@ function renderR16ManualSelectors() {
           </div>
         `;
       } else {
+        const _adminSelect = isAdmin()
+          ? `<select onchange="saveR16ManualOverride('${slotKey}', this.value)">
+              <option value="" ${isAuto ? 'selected' : ''}>🤖 Auto — Annexe C FIFA 2026</option>
+              ${best3.map(b => `<option value="${b.slot}" ${currentOverride === b.slot ? 'selected' : ''}>${b.flag} ${b.name} (3e Grp ${b.group})</option>`).join('')}
+            </select>`
+          : `<div style="font-size:.72rem;color:var(--text3);margin-top:6px">${isAuto ? '🤖 Assigné par Annexe C FIFA 2026' : '⚙️ Assigné manuellement par l\'administrateur'}</div>`;
         card.innerHTML = `
           <div class="slot-label">${isAuto ? '<span class="badge-auto">AUTO</span>' : '<span class="badge-manual">MANUEL</span>'} Match n°${i + 1}</div>
           <div class="teams">
@@ -2608,10 +2616,7 @@ function renderR16ManualSelectors() {
             <span class="vs">vs</span>
             <div class="team">${overrideTeam ? flagHTML(overrideTeam.name, overrideTeam.flag) + ' ' + overrideTeam.name : '❓ Meilleur 3e (Annexe C)'}</div>
           </div>
-          <select onchange="saveR16ManualOverride('${slotKey}', this.value)">
-            <option value="" ${isAuto ? 'selected' : ''}>🤖 Auto — Annexe C FIFA 2026</option>
-            ${best3.map(b => `<option value="${b.slot}" ${currentOverride === b.slot ? 'selected' : ''}>${b.flag} ${b.name} (3e Grp ${b.group})</option>`).join('')}
-          </select>
+          ${_adminSelect}
         `;
       }
     }
@@ -4432,7 +4437,7 @@ async function adminUserLock(userId, pseudo, type, locked) {
 async function adminToggleManual(userId, pseudo, enabled) {
   const d = await adminApiCall('PUT', '/admin/users/' + userId + '/manual', {enabled});
   if (d.success) {
-    if (profiles[pseudo]) profiles[pseudo].r16ManualMode = enabled;
+    await loadAllFromAPI();
     if (pseudo === currentProfile) {
       r16ManualMode = !!enabled;
       const _lbl = document.getElementById('r16ModeLabel');
