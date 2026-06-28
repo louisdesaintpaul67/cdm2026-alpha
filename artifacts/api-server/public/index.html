@@ -4043,17 +4043,19 @@ function renderBonus() {
 function getFranceStage(profileKey) {
   const rounds = buildKOTree(profileKey || currentProfile);
   const T = 'France';
-  function inRound(r) { return (rounds[r]||[]).some(m=>m?.teamH?.name===T||m?.teamA?.name===T); }
-  function wonRound(r) { return (rounds[r]||[]).some(m=>(m?.teamH?.name===T||m?.teamA?.name===T)&&m?.winner?.name===T); }
-  const inFinal = inRound('final');
-  if (inFinal) return wonRound('final') ? '🏆 Vainqueur' : '🥈 Finaliste';
-  const inThird = inRound('third_place');
-  if (inThird) return wonRound('third_place') ? '🥉 3ème place' : '4ème place';
-  if (inRound('r2'))  return 'Elimination Demi-finale';
-  if (inRound('r4'))  return 'Elimination Quart de finale';
-  if (inRound('r8'))  return 'Elimination Huitièmes';
-  if (inRound('r16')) return 'Elimination Seizièmes';
-  return 'Elimination Phase de groupes';
+  function inRound(r)   { return (rounds[r]||[]).some(m=>m?.teamH?.name===T||m?.teamA?.name===T); }
+  function wonRound(r)  { return (rounds[r]||[]).some(m=>(m?.teamH?.name===T||m?.teamA?.name===T)&&m?.winner?.name===T); }
+  function lostRound(r) { return (rounds[r]||[]).some(m=>(m?.teamH?.name===T||m?.teamA?.name===T)&&m?.winner?.name&&m?.winner?.name!==T); }
+
+  if (inRound('final'))       return wonRound('final')       ? '🏆 Vainqueur'   : '🥈 Finaliste';
+  if (inRound('third_place')) return wonRound('third_place') ? '🥉 3ème place'  : '4ème place';
+
+  if (lostRound('r2'))  return 'Elimination Demi-finale';
+  if (lostRound('r4'))  return 'Elimination Quart de finale';
+  if (lostRound('r8'))  return 'Elimination Huitièmes';
+  if (lostRound('r16')) return 'Elimination Seizièmes';
+
+  return '—';
 }
 
 function updateBonusStats() {
@@ -4093,7 +4095,7 @@ function updateBonusStats() {
   _bs.style.display = 'block';
   _bs.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:9px">
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
         <div class="stat-card">
           <div class="stat-value" style="font-size:.88rem;line-height:1.3">${p?.topScorer||'—'}</div>
           <div class="stat-label">⚽ Meilleur buteur</div>
@@ -4112,7 +4114,7 @@ function updateBonusStats() {
           <div class="stat-label">🇫🇷 Parcours France</div>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
         <div class="stat-card">
           <div class="stat-value">${totalGoals}</div>
           <div class="stat-label">⚽ Buts totaux</div>
