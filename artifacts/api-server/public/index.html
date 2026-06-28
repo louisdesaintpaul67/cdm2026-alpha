@@ -4177,8 +4177,8 @@ function renderLeaderboard() {
 
   const scores=Object.entries(profiles)
     .filter(([k])=>k!=='real')
-    .map(([k,v])=>{ const r=computePoints(k); return {key:k,name:v.name,isIA:k==='ia',...r}; })
-    .sort((a,b)=>b.total-a.total||Math.abs(a.breakdown.goals-refGoals)-Math.abs(b.breakdown.goals-refGoals));
+    .map(([k,v])=>{ const r=computePoints(k); const playedGoals=_lbGoalsCache?.get(k)??0; return {key:k,name:v.name,isIA:k==='ia',playedGoals,...r}; })
+    .sort((a,b)=>b.total-a.total||Math.abs(a.playedGoals-refGoals)-Math.abs(b.playedGoals-refGoals));
 
   if(scores.length===0){
     cont.innerHTML='<div class="empty-state"><div class="big">🏆</div>Créez des profils pour voir le classement</div>';
@@ -4187,8 +4187,7 @@ function renderLeaderboard() {
 
   // IA intégrée dans le classement avec vrai rang
   let rows = scores.map((s, i) => {
-    const playedGoals = _lbGoalsCache?.get(s.key) ?? 0;
-    const goalDiff = Math.abs(playedGoals - refGoals);
+    const goalDiff = Math.abs(s.playedGoals - refGoals);
     const pos = i + 1;
     const rankClass = pos===1?'r1':pos===2?'r2':pos===3?'r3':'';
     const medal = pos===1?'🥇':pos===2?'🥈':pos===3?'🥉':'';
