@@ -181,27 +181,6 @@ router.put("/admin/users/:id/locks", requireAdmin, async (req, res): Promise<voi
   res.json({ success: true });
 });
 
-router.put("/admin/users/:id/manual", requireAdmin, async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const id = parseInt(raw, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "ID invalide" }); return; }
-
-  const { enabled } = req.body ?? {};
-
-  const userRows = await db.select({ pseudo: usersTable.pseudo }).from(usersTable).where(eq(usersTable.id, id)).limit(1);
-  if (userRows.length === 0) { res.status(404).json({ error: "Utilisateur introuvable" }); return; }
-  const { pseudo } = userRows[0];
-
-  const rows = await db.select().from(profilesDataTable).where(eq(profilesDataTable.profileKey, pseudo)).limit(1);
-  if (rows.length > 0) {
-    const updatedData = { ...(rows[0].data as Record<string, unknown>), r16ManualMode: enabled };
-    await db.update(profilesDataTable).set({ data: updatedData, updatedAt: new Date() }).where(eq(profilesDataTable.profileKey, pseudo));
-  } else {
-    await db.insert(profilesDataTable).values({ profileKey: pseudo, userId: id, data: { r16ManualMode: enabled } });
-  }
-
-  res.json({ success: true });
-});
 
 router.put("/admin/profiles/:key/locks", requireAdmin, async (req, res): Promise<void> => {
   const key = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;

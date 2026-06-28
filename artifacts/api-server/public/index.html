@@ -1145,12 +1145,7 @@
       <!-- KNOCKOUT -->
       <div class="tab-pane" id="tab-knockout">
         <p class="section-intro">Phase éliminatoire. En cas de match nul à la fin du temps réglementaire, sélectionnez le vainqueur aux tirs au but.</p>
-        <div class="r16-mode-bar" id="r16ModeBar">
-          <span>Mode 1/16 :</span>
-          <span class="mode-label" id="r16ModeLabel">Automatique (FIFA 2026)</span>
-        </div>
         <div id="annexCInfo" style="margin:0 0 16px"></div>
-        <div id="manualR16Content"></div>
         <div id="knockoutContent"></div>
       </div>
 
@@ -1601,9 +1596,6 @@ function createProfile() {
 
 function switchProfile(key) {
   currentProfile = key;
-  r16ManualMode = !!(profiles[key]?.r16ManualMode);
-  const _lbl = document.getElementById('r16ModeLabel');
-  if (_lbl) _lbl.textContent = r16ManualMode ? 'Manuel (choix libre des 1/16)' : 'Automatique (FIFA 2026)';
   saveAll();
   updateProfileUI();
   renderCurrentTab();
@@ -2395,57 +2387,6 @@ function exportBracketPDF() {
 }
 
 // ============================================================
-// MODE MANUEL R16
-// ============================================================
-let r16ManualMode = false;
-let _manualGridExpanded = false;
-
-function toggleManualR16Grid() {
-  if (!isAdmin()) return;
-  _manualGridExpanded = !_manualGridExpanded;
-  renderR16ManualSelectors();
-}
-
-function toggleR16Mode() {
-  r16ManualMode = !r16ManualMode;
-  const label = document.getElementById('r16ModeLabel');
-  if (r16ManualMode) {
-    label.textContent = '1/16 de Finale';
-  } else {
-    label.textContent = 'Automatique (FIFA 2026)';
-  }
-  if (activeTab === 'knockout') {
-    renderKnockout();
-  }
-  if (activeTab === 'bracket') {
-    renderBracket();
-  }
-  if (activeTab === 'leaderboard') {
-    renderLeaderboard();
-  }
-  if (activeTab === 'settings') {
-    renderSettings();
-  }
-  updateBonusStats();
-}
-
-function saveR16ManualOverride(slotKey, thirdBestSlot) {
-  if (!isAdmin()) return;
-  if (!profiles[currentProfile]) profiles[currentProfile] = {};
-  const p = profiles[currentProfile];
-  if (!p.r32ManualOverrides) p.r32ManualOverrides = {};
-  if (thirdBestSlot === '') {
-    delete p.r32ManualOverrides[slotKey];
-  } else {
-    p.r32ManualOverrides[slotKey] = thirdBestSlot;
-  }
-  saveAll();
-  if (activeTab === 'knockout') renderKnockout();
-  if (activeTab === 'bracket') renderBracket();
-  if (activeTab === 'leaderboard') renderLeaderboard();
-  updateBonusStats();
-}
-
 function toggleAnnexCInfo() {
   const body = document.getElementById('annexCInfoBody');
   const toggle = document.getElementById('annexCInfoToggle');
@@ -2457,7 +2398,7 @@ function toggleAnnexCInfo() {
 function renderAnnexCInfo() {
   const q = getQualifiedTeams();
   const p = profiles[currentProfile];
-  const overrides = p.r32ManualOverrides || {};
+  const overrides = {};
   const cont = document.getElementById('annexCInfo');
   if (!cont) return;
 
@@ -2554,117 +2495,6 @@ function renderAnnexCInfo() {
   cont.innerHTML = html;
 }
 
-function renderR16ManualSelectors() {
-  const cont = document.getElementById('manualR16Content');
-  if (!r16ManualMode) { cont.innerHTML = ''; _manualGridExpanded = false; return; }
-
-  const q = getQualifiedTeams();
-  const p = profiles[currentProfile] || {};
-  const overrides = p.r32ManualOverrides || {};
-
-  // ── Vue utilisateur : notice read-only, pas de menu ──────────
-  if (!isAdmin()) {
-    cont.innerHTML = `
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
-        <span style="font-size:1.2rem">⚙️</span>
-        <div>
-          <div style="font-size:.82rem;font-weight:600;color:var(--text)">Mode Manuel activé</div>
-          <div style="font-size:.75rem;color:var(--text3)">Les appariements du 1/16 sont définis par l'administrateur.</div>
-        </div>
-      </div>`;
-    return;
-  }
-
-  // ── Vue admin : accordéon pliable ────────────────────────────
-  const best3 = [];
-  for (let i = 1; i <= 8; i++) {
-    const t = q['3best' + i];
-    if (t && t.group) best3.push({ slot: '3best' + i, group: t.group, name: t.name, flag: t.flag });
-  }
-  const pairs = computeR32Pairs(q, null);
-  const overrideCount = Object.values(overrides).filter(Boolean).length;
-
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'background:var(--surface2);border:1px solid var(--gold);border-radius:var(--radius-sm);margin-bottom:16px;overflow:hidden';
-
-  const header = document.createElement('div');
-  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;user-select:none';
-  header.onclick = toggleManualR16Grid;
-  header.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px">
-      <span style="color:var(--gold);font-weight:700;font-size:.88rem">⚙️ Appariements 1/16 de finale</span>
-      <span style="background:${overrideCount > 0 ? 'var(--gold)' : 'var(--surface3)'};color:${overrideCount > 0 ? '#000' : 'var(--text3)'};border-radius:4px;padding:2px 8px;font-size:.7rem;font-weight:700;border:1px solid var(--border)">
-        ${overrideCount > 0 ? overrideCount + ' override' + (overrideCount > 1 ? 's' : '') : 'Annexe C auto'}
-      </span>
-    </div>
-    <span style="font-size:.78rem;color:var(--text3)">${_manualGridExpanded ? '▲ Réduire' : '▶ Gérer les appariements'}</span>
-  `;
-  wrapper.appendChild(header);
-
-  if (_manualGridExpanded) {
-    const body = document.createElement('div');
-    body.style.cssText = 'padding:0 16px 16px';
-
-    const grid = document.createElement('div');
-    grid.className = 'manual-r16-grid';
-
-    for (let i = 0; i < 16; i++) {
-      const card = document.createElement('div');
-      card.className = 'manual-r16-card';
-
-      if (R32_PURE[i]) {
-        const teamH = q[pairs[i][0]] || { name: pairs[i][0], flag: '❓' };
-        const teamA = q[pairs[i][1]] || { name: pairs[i][1], flag: '❓' };
-        card.innerHTML = `
-          <div class="slot-label"><span class="badge-auto">AUTO</span> Match n°${i + 1}</div>
-          <div class="teams">
-            <div class="team">${flagHTML(teamH.name, teamH.flag)} ${teamH.name}</div>
-            <span class="vs">vs</span>
-            <div class="team">${flagHTML(teamA.name, teamA.flag)} ${teamA.name}</div>
-          </div>
-          <div style="font-size:.68rem;color:var(--text3);margin-top:6px">Paire fixe — règlement FIFA 2026</div>
-        `;
-      } else {
-        const slotKey = R32_MIXED[i];
-        const fixedTeam = q[slotKey] || { name: slotKey, flag: '❓' };
-        const currentOverride = overrides[slotKey];
-        const isAuto = !currentOverride;
-        const overrideTeam = currentOverride ? best3.find(b => b.slot === currentOverride) : null;
-
-        if (best3.length === 0) {
-          card.innerHTML = `
-            <div class="slot-label"><span class="badge-auto">AUTO</span> Match n°${i + 1}</div>
-            <div class="teams">
-              <div class="team">${flagHTML(fixedTeam.name, fixedTeam.flag)} ${fixedTeam.name}</div>
-              <span class="vs">vs</span>
-              <div class="team" style="color:var(--text3)">❓ Meilleur 3e (groupes pas encore complets)</div>
-            </div>
-          `;
-        } else {
-          card.innerHTML = `
-            <div class="slot-label">${isAuto ? '<span class="badge-auto">AUTO</span>' : '<span class="badge-manual">MANUEL</span>'} Match n°${i + 1}</div>
-            <div class="teams">
-              <div class="team">${flagHTML(fixedTeam.name, fixedTeam.flag)} ${fixedTeam.name}</div>
-              <span class="vs">vs</span>
-              <div class="team">${overrideTeam ? flagHTML(overrideTeam.name, overrideTeam.flag) + ' ' + overrideTeam.name : '❓ Meilleur 3e (Annexe C)'}</div>
-            </div>
-            <select onchange="saveR16ManualOverride('${slotKey}', this.value)">
-              <option value="" ${isAuto ? 'selected' : ''}>🤖 Auto — Annexe C FIFA 2026</option>
-              ${best3.map(b => `<option value="${b.slot}" ${currentOverride === b.slot ? 'selected' : ''}>${b.flag} ${b.name} (3e Grp ${b.group})</option>`).join('')}
-            </select>
-          `;
-        }
-      }
-      grid.appendChild(card);
-    }
-
-    body.appendChild(grid);
-    wrapper.appendChild(body);
-  }
-
-  cont.innerHTML = '';
-  cont.appendChild(wrapper);
-}
 
 // ============================================================
 // CLASSEMENTS
@@ -3458,7 +3288,7 @@ function buildKOTree(profileKey) {
   const rounds = {};
 
   // 1/16 de finale (Round of 32)
-  const overrides = r16ManualMode ? (profiles[pk]?.r32ManualOverrides || {}) : null;
+  const overrides = null;
   const r16Pairs = computeR32Pairs(qualified, overrides);
   rounds.r16 = r16Pairs.map((pair,i) => {
     const id=`r16_${i}`;
@@ -3863,12 +3693,7 @@ function renderStandings(group) {
 
 // --- Phase finale ---
 function renderKnockout() {
-  if (!r16ManualMode) {
-    renderAnnexCInfo();
-  } else {
-    document.getElementById('annexCInfo').innerHTML = '';
-  }
-  renderR16ManualSelectors();
+  renderAnnexCInfo();
   const rounds=buildKOTree();
   const cont=document.getElementById('knockoutContent');
   cont.innerHTML='';
@@ -4473,18 +4298,6 @@ async function adminUserLock(userId, pseudo, type, locked) {
   } else alert('Erreur : ' + (d.error || 'inconnue'));
 }
 
-async function adminToggleManual(userId, pseudo, enabled) {
-  const d = await adminApiCall('PUT', '/admin/users/' + userId + '/manual', {enabled});
-  if (d.success) {
-    await loadAllFromAPI();
-    if (pseudo === currentProfile) {
-      r16ManualMode = !!enabled;
-      const _lbl = document.getElementById('r16ModeLabel');
-      if (_lbl) _lbl.textContent = r16ManualMode ? 'Manuel (choix libre des 1/16)' : 'Automatique (FIFA 2026)';
-    }
-    renderSettings();
-  } else alert('Erreur : ' + (d.error || 'inconnue'));
-}
 
 async function adminSystemProfileLock(profileKey, type, locked) {
   const d = await adminApiCall('PUT', '/admin/profiles/' + profileKey + '/locks', {type, locked});
@@ -4687,8 +4500,6 @@ async function renderAdminSettings(cont) {
       const pData = profiles[u.pseudo] || {};
       const isAdminUser = u.role === 'admin';
       const isSelf = u.id === _currSess?.userId;
-      const manualOn = !!pData.r16ManualMode;
-
       html += `<div style="background:var(--surface2);border:1px solid ${isAdminUser ? 'rgba(240,180,41,.25)' : 'var(--border)'};border-radius:var(--radius-sm);padding:14px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
           <span style="font-size:1.3rem">${u.emoji}</span>
@@ -5062,18 +4873,6 @@ async function renderAdminOtherProfileSettings(cont) {
     html += '</div></div>';
   }
 
-  // Mode manuel (uniquement pour les profils utilisateurs non-admin)
-  if (isUserProfile) {
-    const manualOn = p ? !!p.r16ManualMode : false;
-    html += '<div class="settings-section">';
-    html += '<div class="settings-section-title">⚙️ Mode 1/16 de finale</div>';
-    html += '<p style="font-size:.78rem;color:var(--text3);margin-bottom:12px">En mode Manuel, le joueur peut choisir librement le matchmaking du 1/16 (au lieu de l\'Annexe C FIFA 2026).</p>';
-    html += `<button class="btn-set ${manualOn ? 'btn-set-lock' : 'btn-set-neutral'}" style="padding:8px 16px;font-size:.85rem"
-      onclick="adminToggleManual(${viewedUser.id},'${(viewedUser.pseudo||'').replace(/'/g,"\\'")}',${!manualOn})">
-      ${manualOn ? '⚙️ Mode Manuel (actif) — Passer en Auto' : '⚙️ Mode Automatique — Activer Manuel'}
-    </button>`;
-    html += '</div>';
-  }
 
   // Export (toujours présent)
   html += '<div class="settings-section">';
@@ -5173,11 +4972,6 @@ function renderCurrentTab() {
     case 'bonus':       renderBonus(); break;
     case 'leaderboard': renderLeaderboard(); break;
     case 'settings':    renderSettings(); break;
-  }
-  // Mettre à jour le badge de mode dans la barre r16
-  const label = document.getElementById('r16ModeLabel');
-  if (label) {
-    label.textContent = r16ManualMode ? 'Manuel (choix libre des 1/16)' : 'Automatique (FIFA 2026)';
   }
 }
 
