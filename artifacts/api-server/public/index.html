@@ -4049,11 +4049,11 @@ function getFranceStage(profileKey) {
   if (inFinal) return wonRound('final') ? '🏆 Vainqueur' : '🥈 Finaliste';
   const inThird = inRound('third_place');
   if (inThird) return wonRound('third_place') ? '🥉 3ème place' : '4ème place';
-  if (inRound('r2'))  return '🔴 Demi-finale';
-  if (inRound('r4'))  return '🔴 Quart de finale';
-  if (inRound('r8'))  return '🔴 Huitièmes de finale';
-  if (inRound('r16')) return '🔴 Seizièmes de finale';
-  return '🔴 Phase de groupes';
+  if (inRound('r2'))  return 'Elimination Demi-finale';
+  if (inRound('r4'))  return 'Elimination Quart de finale';
+  if (inRound('r8'))  return 'Elimination Huitièmes';
+  if (inRound('r16')) return 'Elimination Seizièmes';
+  return 'Elimination Phase de groupes';
 }
 
 function updateBonusStats() {
@@ -4089,7 +4089,9 @@ function updateBonusStats() {
   const flagHtml     = champion ? `<img class="flag-img" src="${flagUrl(champion.name)||''}" onerror="this.style.display='none'" style="width:26px;height:19px;margin-bottom:2px">` : '';
   const franceStage  = getFranceStage(currentProfile);
 
-  document.getElementById('bonusStats').innerHTML = `
+  const _bs = document.getElementById('bonusStats');
+  _bs.style.display = 'block';
+  _bs.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:9px">
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
         <div class="stat-card">
@@ -4183,7 +4185,7 @@ function renderLeaderboard() {
 
   // IA intégrée dans le classement avec vrai rang
   let rows = scores.map((s, i) => {
-    const playedGoals = getGoalsOnPlayed(s.key);
+    const playedGoals = _lbGoalsCache?.get(s.key) ?? 0;
     const goalDiff = Math.abs(playedGoals - refGoals);
     const pos = i + 1;
     const rankClass = pos===1?'r1':pos===2?'r2':pos===3?'r3':'';
