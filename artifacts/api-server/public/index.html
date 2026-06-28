@@ -1181,7 +1181,7 @@
                           • <strong>Groupes :</strong> Bon résultat : <strong>+1 pt</strong> · Score exact : <strong>+3 pts au total</strong><br>
                           • <strong>Phase finale :</strong> Équipe présente au bon tour : <strong>+1/2/4/8/12 pts</strong> selon l'étape<br>
                           • <strong>Bonus Choc (KO) :</strong> Bonne affiche + score exact trouvé : <strong>Points des deux équipes x2</strong><br>
-                          • <strong>Vainqueurs :</strong> Champion juste : <strong>+30 pts</strong> · Meilleure différence de buts : <strong>+20 pts</strong> · Meilleur buteur juste : <strong>+10 pts</strong>
+                          • <strong>Vainqueurs :</strong> Champion juste : <strong>+30 pts</strong> · Meilleure différence de buts : <strong>+10 pts</strong> · Meilleur buteur juste : <strong>+10 pts</strong>
                         </div>
         <div class="card" id="leaderboardCard">
           <div class="card-body" id="leaderboardContent"></div>
@@ -3560,8 +3560,8 @@ function computePoints(profileKey) {
   });
 
   if (holdsBestDiff && refGoals > 0) {
-    pts += 20;
-    bd.bonus += 20;
+    pts += 10;
+    bd.bonus += 10;
   }
 
   // ---------- BUTS (tiebreak) ----------
@@ -4698,12 +4698,6 @@ function renderUserSettings(cont) {
       <button type="button" class="emoji-btn" onclick="settingsSelectEmoji('😂',this)">😂</button>
       <button type="button" class="emoji-btn" onclick="settingsSelectEmoji('🗽',this)">🗽</button>
     </div>
-    <div class="settings-field-label">Nom affiché</div>
-    <input type="text" class="settings-input" id="settingsProfileName"
-      value="${nameNoEmoji}"
-      maxlength="30"
-      placeholder="Votre nom..."
-      oninput="applyProfileNameChange()" />
     <div style="margin-top:14px">
       <div class="settings-field-label">Changer le pseudo (identifiant de connexion)</div>
       <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:4px">
@@ -4924,13 +4918,12 @@ function settingsSelectEmoji(e, btn) {
   applyProfileNameChange();
 }
 
-// Applique le changement de nom+emoji en temps réel
+// Applique le changement d'emoji en temps réel (le nom affiché est toujours le pseudo)
 function applyProfileNameChange() {
   if (currentProfile === 'real' || currentProfile === 'ia') return;
-  const nameInput = document.getElementById('settingsProfileName');
-  if (!nameInput) return;
-  const rawName = nameInput.value.trim() || 'Joueur';
-  profiles[currentProfile].name = _settingsEmoji + ' ' + rawName;
+  const _sess2 = _getSession();
+  const pseudo = _sess2?.pseudo || currentProfile;
+  profiles[currentProfile].name = _settingsEmoji + ' ' + pseudo;
   saveAll();
   // Mettre à jour le select sans re-rendre tout (le badge affiche le compte connecté, pas le profil)
   const sel = document.getElementById('profileSelect');
