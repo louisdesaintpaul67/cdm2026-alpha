@@ -5239,6 +5239,8 @@ function initSSE() {
     try {
       const d = JSON.parse(e.data);
       if (d.type === 'update') {
+        const _s = _getSession();
+        if (d.sourceUserId != null && _s?.userId != null && d.sourceUserId === _s.userId) return;
         loadAllFromAPI().then(_renderAfterSync).catch(() => {});
       }
     } catch(err) {}
