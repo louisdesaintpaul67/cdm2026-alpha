@@ -1561,13 +1561,19 @@ function getAIPredictions() {
 // ============================================================
 function updateProfileUI() {
   const sel = document.getElementById('profileSelect');
-  sel.innerHTML = '';
-  Object.entries(profiles).forEach(([k,v]) => {
-    const opt = document.createElement('option');
-    opt.value = k; opt.textContent = v.name;
-    if (k === currentProfile) opt.selected = true;
-    sel.appendChild(opt);
-  });
+  // Fingerprint : ne reconstruire le <select> que si la liste ou le profil
+  // actif a réellement changé — évite le flash du dropdown à chaque SSE.
+  const _fp = Object.entries(profiles).map(([k,v]) => k + ':' + v.name).join('|') + '|cp:' + currentProfile;
+  if (sel.dataset.renderFp !== _fp) {
+    sel.dataset.renderFp = _fp;
+    sel.innerHTML = '';
+    Object.entries(profiles).forEach(([k,v]) => {
+      const opt = document.createElement('option');
+      opt.value = k; opt.textContent = v.name;
+      if (k === currentProfile) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
   // Badge en haut à droite = compte connecté (pas le profil observé)
   const _sessForBadge = _getSession();
   if (_sessForBadge?.pseudo) {
@@ -3756,7 +3762,9 @@ function renderStandings(group) {
     <span class="tag tag-gold">■ *</span> Meilleur 3ème &nbsp;
     <span class="tag tag-red">■</span> Éliminé
   </div>`;
-  cont.innerHTML=html;
+  // Ne reconstruire le DOM que si le contenu a réellement changé — évite le
+  // clignotement des lignes au hover lors d'un re-render SSE sans changement.
+  if (cont.innerHTML !== html) cont.innerHTML = html;
 }
 
 // --- Phase finale ---
@@ -3764,13 +3772,19 @@ function renderKnockout() {
   renderAnnexCInfo();
   const rounds=buildKOTree();
   const cont=document.getElementById('knockoutContent');
-  cont.innerHTML='';
 
   const p = profiles[currentProfile];
   const isLocked = p.knockoutLocked;
   const _sess = _getSession();
   const canEdit = isAdmin() || currentProfile === _sess?.pseudo;
   const inputDisabled = !canEdit || isLocked;
+
+  // Fingerprint : skip le rebuild si rien n'a changé — évite le clignotement
+  // au hover lors d'un re-render SSE qui n'affecte pas ce profil.
+  const _fp = JSON.stringify(rounds) + '|' + String(inputDisabled);
+  if (cont.dataset.renderFp === _fp) return;
+  cont.dataset.renderFp = _fp;
+  cont.innerHTML = '';
 
   const defs=[
     {key:'r16',label:'1/16 de Finale',pts:'+1 pt/équipe'},
@@ -3843,6 +3857,11 @@ function renderKnockout() {
 function renderBracket() {
   const rounds = buildKOTree();
   const cont = document.getElementById('bracketViz');
+  // Fingerprint : skip le rebuild complet si les données n'ont pas changé.
+  // Évite le clignotement au hover quand un SSE externe n'affecte pas ce profil.
+  const _fp = JSON.stringify(rounds);
+  if (cont.dataset.renderFp === _fp) return;
+  cont.dataset.renderFp = _fp;
   cont.innerHTML = '';
 
   const H     = 600;   // bracket content height (px)
@@ -4452,24 +4471,41 @@ async function loadAllFromAPI() {
   try {
     const r = await fetch('/api/data', {headers: {'Authorization':'Bearer '+_s.token}});
     const d = await r.json();
+    let _dataChanged = false;
     if (d?.profiles) {
-      // Track all profile keys from API so cleanup won't remove them
+      // Track all profile keys from API so cleanup won't remove them.
+      // Compare chaque profil avant d'écraser : si les données sont identiques
+      // on ne touche pas à l'objet profiles[] et on lève _dataChanged = false,
+      // ce qui permet aux appelants de sauter le re-render et évite tout flicker.
       Object.keys(d.profiles).forEach(k => {
         _apiLoadedProfileKeys.add(k);
         // Ne pas écraser le profil courant s'il a des modifications non encore
-        // envoyées au serveur (debounce en attente) — évite de réinitialiser
-        // les champs de saisie en cours d'édition.
+        // envoyées au serveur (debounce en attente).
         if (k === currentProfile && _saveDebounceTimers[k]) return;
-        profiles[k] = d.profiles[k];
+        const incoming = JSON.stringify(d.profiles[k]);
+        if (JSON.stringify(profiles[k]) !== incoming) {
+          profiles[k] = d.profiles[k];
+          _dataChanged = true;
+        }
       });
-      if (profiles['real']) profiles['real'].name = '📋 Résultats Réels';
-      if (profiles['ia']) profiles['ia'].name = '🤖 Résultat IA';
-      _profilesVersion++;
+      // Détecter les profils supprimés côté serveur
+      if (!_dataChanged) {
+        const apiKeys = Object.keys(d.profiles).sort().join(',');
+        const localKeys = Object.keys(profiles).filter(k => k !== 'ia').sort().join(',');
+        if (apiKeys !== localKeys) _dataChanged = true;
+      }
+      if (_dataChanged) {
+        if (profiles['real']) profiles['real'].name = '📋 Résultats Réels';
+        if (profiles['ia']) profiles['ia'].name = '🤖 Résultat IA';
+        _profilesVersion++;
+      }
     }
     if (Array.isArray(d?.adminPseudos)) _adminPseudos = d.adminPseudos;
     cleanupUserProfiles();
     saveAll();
+    return _dataChanged;
   } catch(e) {}
+  return false;
 }
 
 async function userChangePassword() {
@@ -5035,6 +5071,19 @@ function renderSettings() {
   const cont = document.getElementById('settingsContent');
   if (!cont) return;
 
+  // Fingerprint : évite de reconstruire tout le panneau settings à chaque
+  // SSE si aucune donnée pertinente n'a changé (profil, locks, session).
+  const _sess = _getSession();
+  const _p = profiles[currentProfile];
+  const _fp = [
+    currentProfile,
+    String(isAdmin()),
+    _sess?.pseudo || '',
+    _p ? String(_p.poulesLocked) + String(_p.knockoutLocked) + String(_p.buteurLocked) + (_p.name||'') : '',
+  ].join('|');
+  if (cont.dataset.renderFp === _fp) return;
+  cont.dataset.renderFp = _fp;
+
   if (isAdmin()) {
     const _sess = _getSession();
     const ownPseudo = _sess?.pseudo;
@@ -5228,9 +5277,13 @@ function _withFocusPreserved(renderFn) {
       if (restored.type === 'number') {
         // setSelectionRange n'est pas supporté sur type=number — réassigner la
         // valeur force le curseur en fin sans déclencher oninput (affectation JS).
-        const v = restored.value;
-        restored.value = '';
-        restored.value = v;
+        // On ne fait rien si la valeur est vide : ça éviterait un flash visuel
+        // (placeholder gris → jaune focus) sans aucun bénéfice de cursor.
+        if (restored.value !== '') {
+          const v = restored.value;
+          restored.value = '';
+          restored.value = v;
+        }
       } else {
         try { restored.setSelectionRange(selStart, selEnd); } catch(e) {}
       }
@@ -5255,7 +5308,7 @@ function initSSE() {
       if (d.type === 'update') {
         const _s = _getSession();
         if (d.sourceUserId != null && _s?.userId != null && d.sourceUserId === _s.userId) return;
-        loadAllFromAPI().then(_renderAfterSync).catch(() => {});
+        loadAllFromAPI().then(changed => { if (changed) _renderAfterSync(); }).catch(() => {});
       }
     } catch(err) {}
   };
@@ -5291,8 +5344,8 @@ function _startLiveSync() {
       const { version } = await r.json();
       if (version && version !== _lastKnownVersion) {
         _lastKnownVersion = version;
-        await loadAllFromAPI();
-        _renderAfterSync();
+        const changed = await loadAllFromAPI();
+        if (changed) _renderAfterSync();
       }
     } catch(e) {}
   }, 6000);
@@ -5302,7 +5355,7 @@ function _startLiveSync() {
   if (window._profilePollInterval) clearInterval(window._profilePollInterval);
   window._profilePollInterval = setInterval(() => {
     if (!_getSession()?.token) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; return; }
-    loadAllFromAPI().then(_renderAfterSync).catch(() => {});
+    loadAllFromAPI().then(changed => { if (changed) _renderAfterSync(); }).catch(() => {});
   }, 60000);
 }
 
