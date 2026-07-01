@@ -1,9 +1,71 @@
 import { Router } from "express";
-import { db, usersTable, profilesDataTable, settingsTable } from "@workspace/db";
+import { Response } from "express";
+import { db, usersTable, profilesDataTable, settingsTable, sessionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
+
+// ── SSE ──────────────────────────────────────────────────────────────────────
+const sseClients = new Set<Response>();
+
+function broadcastUpdate(key: string): void {
+  const msg = `data: ${JSON.stringify({ type: "update", key })}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(msg);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
+/**
+ * GET /events
+ * Server-Sent Events — pousse une notification quand un profil est mis à jour.
+ * Token en query param car EventSource ne supporte pas les headers custom.
+ */
+router.get("/events", async (req, res): Promise<void> => {
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  if (!token) {
+    res.status(401).json({ error: "Non authentifié" });
+    return;
+  }
+
+  const rows = await db
+    .select({ userId: sessionsTable.userId })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.token, token))
+    .limit(1);
+
+  if (rows.length === 0) {
+    res.status(401).json({ error: "Non authentifié" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no"); // Désactive le buffering nginx/Render
+  res.flushHeaders();
+
+  sseClients.add(res);
+  res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(":heartbeat\n\n");
+    } catch {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    }
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+});
 
 /**
  * GET /data
@@ -12,25 +74,19 @@ const router = Router();
  * - User: all profiles (for leaderboard) + list of admin pseudos
  */
 router.get("/data", requireAuth, async (req: AuthRequest, res): Promise<void> => {
-  const isAdmin = req.userRole === "admin";
-
-  // Fetch all profile rows
   const rows = await db.select().from(profilesDataTable);
 
-  // Build profiles map (key → data) — all users see all profiles for leaderboard
   const profiles: Record<string, Record<string, unknown>> = {};
   for (const row of rows) {
     profiles[row.profileKey] = row.data as Record<string, unknown>;
   }
 
-  // Admin pseudos — returned to all users so leaderboard can distinguish
   const admins = await db
     .select({ pseudo: usersTable.pseudo })
     .from(usersTable)
     .where(eq(usersTable.role, "admin"));
   const adminPseudos = admins.map((a) => a.pseudo);
 
-  // Public settings exposed to all authenticated users
   const settingRows = await db
     .select({ key: settingsTable.key, value: settingsTable.value })
     .from(settingsTable)
@@ -45,6 +101,7 @@ router.get("/data", requireAuth, async (req: AuthRequest, res): Promise<void> =>
  * Saves (upserts) a profile's JSON data.
  * - Admin can save any key (including "real" and "ia")
  * - Users can only save their own pseudo key
+ * Broadcasts an SSE update to all connected clients after save.
  */
 router.put("/data/:key", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   const rawKey = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
@@ -75,12 +132,10 @@ router.put("/data/:key", requireAuth, async (req: AuthRequest, res): Promise<voi
     const existingData = (existing[0].data as Record<string, unknown>) ?? {};
     const mergedData = { ...(data as Record<string, unknown>) };
 
-    // DB is authoritative for lock flags — client can never set or clear them
     for (const field of LOCK_FIELDS) {
       mergedData[field] = !!existingData[field];
     }
 
-    // When a section is locked, also preserve its data from DB so clients cannot overwrite it
     if (existingData["poulesLocked"]) {
       mergedData["groupScores"] = existingData["groupScores"];
     }
@@ -96,7 +151,6 @@ router.put("/data/:key", requireAuth, async (req: AuthRequest, res): Promise<voi
       .set({ data: mergedData, updatedAt: new Date() })
       .where(eq(profilesDataTable.profileKey, key));
   } else {
-    // Find userId for this key (if it's a user's pseudo)
     const userRows = await db
       .select({ id: usersTable.id })
       .from(usersTable)
@@ -107,6 +161,7 @@ router.put("/data/:key", requireAuth, async (req: AuthRequest, res): Promise<voi
   }
 
   res.json({ success: true });
+  broadcastUpdate(key);
 });
 
 /**

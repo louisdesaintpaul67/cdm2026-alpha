@@ -1280,6 +1280,10 @@ let activeTab = 'groups';
 
 // Cache pour le calcul du classement (évite O(N²))
 let _lbGoalsCache = null;
+// Version counter — incrémenté à chaque modification des profils
+let _profilesVersion = 0;
+// Cache du rendu HTML du classement (invalidé si _profilesVersion change)
+let _lbCache = { version: -1, rows: '' };
 
 // NOUVEAU : defaultProfile inclut les flags de verrou
 function defaultProfile() {
@@ -1302,6 +1306,7 @@ function _getSession() {
 }
 
 function saveAll() {
+  _profilesVersion++;
   try { localStorage.setItem('wc2026v2_profiles', JSON.stringify(profiles)); } catch(e){}
   try { localStorage.setItem('wc2026v2_current', currentProfile); } catch(e){}
   // Sauvegarde en DB (fire-and-forget)
@@ -4139,6 +4144,8 @@ function updateBonusStats() {
 // --- Classement général ---
 function renderLeaderboard() {
   const cont=document.getElementById('leaderboardContent');
+  // Cache : ne recalcule que si les données ont changé depuis le dernier rendu
+  if (_lbCache.version === _profilesVersion && _lbCache.rows) { cont.innerHTML = _lbCache.rows; return; }
   const refGoals=computeTotalGoals('real');
 
   // Pré-calcul O(N) des buts sur matchs joués pour éviter O(N²) dans computePoints
@@ -4208,6 +4215,7 @@ function renderLeaderboard() {
     </div>`;
   }).join('');
 
+  _lbCache = { version: _profilesVersion, rows };
   cont.innerHTML = rows;
   _lbGoalsCache = null;
 }
@@ -4389,6 +4397,7 @@ async function loadAllFromAPI() {
       Object.assign(profiles, d.profiles);
       if (profiles['real']) profiles['real'].name = '📋 Résultats Réels';
       if (profiles['ia']) profiles['ia'].name = '🤖 Résultat IA';
+      _profilesVersion++;
     }
     if (Array.isArray(d?.adminPseudos)) _adminPseudos = d.adminPseudos;
     cleanupUserProfiles();
@@ -4442,8 +4451,9 @@ async function userChangePseudo() {
       }
       if (!profiles[sess.pseudo]) {
         profiles[sess.pseudo] = { ...defaultProfile(), name: (sess.emoji || '😎') + ' ' + sess.pseudo };
+      } else if (!profiles[sess.pseudo].name) {
+        profiles[sess.pseudo].name = (sess.emoji || '😎') + ' ' + sess.pseudo;
       }
-      profiles[sess.pseudo].name = (sess.emoji || '😎') + ' ' + sess.pseudo;
       currentProfile = sess.pseudo;
     }
     _apiLoadedProfileKeys.add(d.pseudo || newPseudo);
@@ -4768,6 +4778,8 @@ function renderUserSettings(cont) {
       <button type="button" class="emoji-btn" onclick="settingsSelectEmoji('😂',this)">😂</button>
       <button type="button" class="emoji-btn" onclick="settingsSelectEmoji('🗽',this)">🗽</button>
     </div>
+    <button class="btn-set btn-set-neutral" style="margin-top:10px;margin-bottom:6px" onclick="applyProfileNameChange()">💾 Sauvegarder l'emoji</button>
+    <div id="settingsEmojiMsg" style="font-size:.8rem;min-height:1.2em;margin-bottom:6px"></div>
     <div style="margin-top:14px">
       <div class="settings-field-label">Changer le pseudo</div>
       <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:4px">
@@ -4985,17 +4997,30 @@ function settingsSelectEmoji(e, btn) {
     cont.querySelectorAll('#settingsEmojiPicker .emoji-btn').forEach(b => b.classList.remove('active'));
   }
   btn.classList.add('active');
-  applyProfileNameChange();
+  // Sélection seule — la sauvegarde se fait via le bouton dédié
 }
 
-// Applique le changement d'emoji en temps réel (le nom affiché est toujours le pseudo)
+// Applique le changement d'emoji et le persiste (session + DB utilisateur + profil)
 function applyProfileNameChange() {
   if (currentProfile === 'real' || currentProfile === 'ia') return;
   const _sess2 = _getSession();
   const pseudo = _sess2?.pseudo || currentProfile;
   profiles[currentProfile].name = _settingsEmoji + ' ' + pseudo;
+  // Mettre à jour sess.emoji dans localStorage pour éviter l'écrasement au prochain poll
+  if (_sess2) {
+    _sess2.emoji = _settingsEmoji;
+    try { localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(_sess2)); } catch(e) {}
+  }
+  // Synchroniser l'emoji dans la table users (fire-and-forget)
+  if (_sess2?.token) {
+    fetch('/api/auth/profile', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json','Authorization':'Bearer '+_sess2.token},
+      body: JSON.stringify({emoji: _settingsEmoji})
+    }).catch(() => {});
+  }
   saveAll();
-  // Mettre à jour le select sans re-rendre tout (le badge affiche le compte connecté, pas le profil)
+  // Mettre à jour le select et afficher confirmation
   const sel = document.getElementById('profileSelect');
   for (let i = 0; i < sel.options.length; i++) {
     if (sel.options[i].value === currentProfile) {
@@ -5003,6 +5028,9 @@ function applyProfileNameChange() {
       break;
     }
   }
+  const msg = document.getElementById('settingsEmojiMsg');
+  if (msg) { msg.textContent = '✅ Emoji sauvegardé !'; msg.style.color = 'var(--green)'; setTimeout(() => { msg.textContent = ''; }, 2000); }
+  updateProfileUI();
 }
 
 // ============================================================
@@ -5107,8 +5135,26 @@ function toggleAuthPw(inputId, btn) {
   btn.innerHTML = isHidden ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
 }
 
+function initSSE() {
+  const _s = _getSession();
+  if (!_s?.token) return;
+  if (window._sseSource) { try { window._sseSource.close(); } catch(e) {} window._sseSource = null; }
+  const es = new EventSource('/api/events?token=' + encodeURIComponent(_s.token));
+  window._sseSource = es;
+  es.onmessage = (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.type === 'update') {
+        loadAllFromAPI().then(() => { updateProfileUI(); renderCurrentTab(); }).catch(() => {});
+      }
+    } catch(err) {}
+  };
+  // EventSource auto-reconnecte; le poll de 30s sert de filet de sécurité
+}
+
 function doLogout() {
   try { localStorage.removeItem(AUTH_SESSION_KEY); } catch(e) {}
+  if (window._sseSource) { try { window._sseSource.close(); } catch(e) {} window._sseSource = null; }
   if (window._profilePollInterval) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; }
   document.getElementById('authOverlay').classList.remove('hidden');
   switchAuthTab('login');
@@ -5147,16 +5193,17 @@ function _enterApp(pseudo, emoji, token, role, userId) {
     updateProfileUI();
     renderCurrentTab();
   }).catch(() => { updateProfileUI(); renderCurrentTab(); });
-  // Rafraîchissement automatique des profils toutes les 60 secondes (uniquement quand l'onglet est visible)
+  // SSE pour les mises à jour en temps réel; poll toutes les 30s comme filet de sécurité
+  initSSE();
   if (window._profilePollInterval) clearInterval(window._profilePollInterval);
   window._profilePollInterval = setInterval(() => {
     if (!_getSession()?.token) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; return; }
     if (document.visibilityState === 'hidden') return;
     loadAllFromAPI().then(() => {
       updateProfileUI();
-      if (activeTab === 'leaderboard') renderLeaderboard();
+      renderCurrentTab();
     }).catch(() => {});
-  }, 60000);
+  }, 30000);
 }
 
 async function _apiAvailable() {
