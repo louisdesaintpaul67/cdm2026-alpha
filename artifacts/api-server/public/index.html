@@ -1800,6 +1800,10 @@ function getKOScore(matchId) {
   return p.koScores[matchId] || {h:'',a:'',winner:null};
 }
 
+// Timer de debounce pour le re-rendu de la phase finale après une saisie de
+// score (voir saveKOScore) — évite de voler le focus du champ en cours de frappe.
+let _koRenderDebounceTimer = null;
+
 function saveKOScore(matchId, field, val) {
   const p = profiles[currentProfile];
   if (!p) return;
@@ -1829,11 +1833,29 @@ function saveKOScore(matchId, field, val) {
     }
   }
 
-  // 3. Sauvegarde et mise à jour de l'affichage
+  // 3. Sauvegarde
   saveAll();
-  const _sy = window.scrollY;
-  renderCurrentTab();
-  requestAnimationFrame(() => window.scrollTo(0, _sy));
+
+  // 4. Mise à jour de l'affichage
+  // Pour un clic sur le bouton "vainqueur TAB" (pas un champ texte), aucun
+  // risque de perte de focus : on peut re-rendre tout de suite.
+  // Pour une saisie de score (h/a), renderKnockout() reconstruit tout le DOM
+  // et détruirait le focus du champ en cours de frappe si on le faisait à
+  // chaque caractère — on débounce donc ce re-rendu de 500ms après la
+  // dernière frappe, le temps que l'utilisateur finisse de taper.
+  if (field === 'winner') {
+    const _sy = window.scrollY;
+    _withFocusPreserved(renderCurrentTab);
+    requestAnimationFrame(() => window.scrollTo(0, _sy));
+  } else {
+    if (_koRenderDebounceTimer) clearTimeout(_koRenderDebounceTimer);
+    _koRenderDebounceTimer = setTimeout(() => {
+      _koRenderDebounceTimer = null;
+      const _sy = window.scrollY;
+      _withFocusPreserved(renderCurrentTab);
+      requestAnimationFrame(() => window.scrollTo(0, _sy));
+    }, 500);
+  }
 }
 
 function saveTopScorer() {
@@ -3683,10 +3705,12 @@ function renderGroupMatches(group) {
       <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
         <div class="score-input-group">
           <input class="score-input${hF?' filled':''}" type="number" min="0" value="${hF?sc.h:''}" placeholder="${inputDisabled?'':'–'}"
+            data-field-key="grp-${group}-${mi}-h"
             ${inputDisabled ? 'disabled' : ''}
             oninput="saveGroupScore('${group}',${mi},'h',this.value);this.classList.toggle('filled',this.value!=='')" />
           <span class="score-sep">:</span>
           <input class="score-input${aF?' filled':''}" type="number" min="0" value="${aF?sc.a:''}" placeholder="${inputDisabled?'':'–'}"
+            data-field-key="grp-${group}-${mi}-a"
             ${inputDisabled ? 'disabled' : ''}
             oninput="saveGroupScore('${group}',${mi},'a',this.value);this.classList.toggle('filled',this.value!=='')" />
         </div>
@@ -3780,10 +3804,12 @@ function renderKnockout() {
           </div>
           <div class="ko-score-grp">
             <input class="score-input${hS!==''?' filled':''}" style="width:40px;height:40px" type="number" min="0" value="${hS}" placeholder="–"
+              data-field-key="ko-${m.id}-h"
               ${inputDisabled ? 'disabled' : ''}
               oninput="saveKOScore('${m.id}','h',this.value)"/>
             <span class="score-sep">–</span>
             <input class="score-input${aS!==''?' filled':''}" style="width:40px;height:40px" type="number" min="0" value="${aS}" placeholder="–"
+              data-field-key="ko-${m.id}-a"
               ${inputDisabled ? 'disabled' : ''}
               oninput="saveKOScore('${m.id}','a',this.value)"/>
           </div>
@@ -5170,6 +5196,39 @@ function toggleAuthPw(inputId, btn) {
   btn.innerHTML = isHidden ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
 }
 
+// Un rendu (renderCurrentTab, etc.) reconstruit le DOM via innerHTML, ce qui
+// détruit et recrée les <input> — y compris celui en cours de frappe, avec
+// perte du focus. Ce wrapper générique évite ça : avant le rendu, on repère
+// le champ actuellement focalisé via son attribut data-field-key (posé sur
+// les champs de score groupes/phase finale) et la position du curseur ; après
+// le rendu, on retrouve le nouvel élément portant la même clé et on lui
+// redonne le focus + la position du curseur. Fonctionne quel que soit le
+// déclencheur du rendu (ta propre frappe, une mise à jour SSE, un poll...).
+// Ne nécessite aucune modification de la logique de sauvegarde des champs.
+function _withFocusPreserved(renderFn) {
+  const el = document.activeElement;
+  const key = (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.dataset)
+    ? el.dataset.fieldKey
+    : null;
+  const selStart = key ? el.selectionStart : null;
+  const selEnd = key ? el.selectionEnd : null;
+
+  renderFn();
+
+  if (key) {
+    const restored = document.querySelector('[data-field-key="' + CSS.escape(key) + '"]');
+    if (restored) {
+      restored.focus({ preventScroll: true });
+      try { restored.setSelectionRange(selStart, selEnd); } catch(e) {}
+    }
+  }
+}
+
+function _renderAfterSync() {
+  updateProfileUI();
+  _withFocusPreserved(renderCurrentTab);
+}
+
 function initSSE() {
   const _s = _getSession();
   if (!_s?.token) return;
@@ -5180,7 +5239,7 @@ function initSSE() {
     try {
       const d = JSON.parse(e.data);
       if (d.type === 'update') {
-        loadAllFromAPI().then(() => { updateProfileUI(); renderCurrentTab(); }).catch(() => {});
+        loadAllFromAPI().then(_renderAfterSync).catch(() => {});
       }
     } catch(err) {}
   };
@@ -5217,8 +5276,7 @@ function _startLiveSync() {
       if (version && version !== _lastKnownVersion) {
         _lastKnownVersion = version;
         await loadAllFromAPI();
-        updateProfileUI();
-        renderCurrentTab();
+        _renderAfterSync();
       }
     } catch(e) {}
   }, 6000);
@@ -5228,10 +5286,7 @@ function _startLiveSync() {
   if (window._profilePollInterval) clearInterval(window._profilePollInterval);
   window._profilePollInterval = setInterval(() => {
     if (!_getSession()?.token) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; return; }
-    loadAllFromAPI().then(() => {
-      updateProfileUI();
-      renderCurrentTab();
-    }).catch(() => {});
+    loadAllFromAPI().then(_renderAfterSync).catch(() => {});
   }, 60000);
 }
 

@@ -41,3 +41,31 @@ Render redéploiera automatiquement. Aucun changement de schéma DB requis.
   d'échec simultané du SSE ET du poll léger — un scénario rare, donc sa
   fréquence peut être basse sans impact réel)
 - Debounce des écritures DB : 600ms -> **1s**
+
+## Fix : perte de focus en saisissant un score de phase finale
+- `saveKOScore()` re-rendait tout le DOM de la phase finale à CHAQUE frappe
+  (bug préexistant, indépendant de ce patch) → le champ en cours de saisie
+  était détruit et recréé sans focus. Le re-rendu est maintenant débouncé
+  (500ms après la dernière frappe) pour les champs texte ; le clic sur le
+  bouton "vainqueur aux tirs au but" reste instantané (pas de champ texte,
+  pas de risque de focus).
+- Garde supplémentaire (`_isEditingSensitiveField`) : les mises à jour reçues
+  en arrière-plan (SSE, poll) ne redessinent plus l'écran si un champ de
+  score/buteur est activement en cours de saisie — elles se contentent de
+  mettre à jour les données en mémoire, l'affichage se rafraîchit tout seul
+  au cycle suivant (max 6s) dès que le champ perd le focus.
+
+## Vrai fix (pas juste un contournement) : préservation du focus/curseur
+Remplace la mitigation précédente (retarder/sauter le rendu) par une
+correction générique du défaut de fond :
+- Ajout d'un attribut `data-field-key` stable sur les 4 champs de score
+  concernés (groupes h/a, phase finale h/a) — seule modification des templates,
+  aucune logique de sauvegarde touchée.
+- Nouvelle fonction générique `_withFocusPreserved(renderFn)` : mémorise le
+  champ focalisé + la position du curseur avant un rendu, exécute le rendu,
+  puis restaure le focus/curseur sur le nouvel élément équivalent après coup.
+- Utilisée partout où un rendu peut interrompre une saisie (le rendu propre de
+  `saveKOScore`, ET les rendus déclenchés par SSE/poll via `_renderAfterSync`).
+Résultat : plus aucun rendu, quel qu'en soit le déclencheur, ne peut te faire
+perdre le focus pendant que tu tapes — au lieu de simplement réduire la
+fréquence à laquelle ça pouvait arriver.
