@@ -4454,8 +4454,14 @@ async function loadAllFromAPI() {
     const d = await r.json();
     if (d?.profiles) {
       // Track all profile keys from API so cleanup won't remove them
-      Object.keys(d.profiles).forEach(k => _apiLoadedProfileKeys.add(k));
-      Object.assign(profiles, d.profiles);
+      Object.keys(d.profiles).forEach(k => {
+        _apiLoadedProfileKeys.add(k);
+        // Ne pas écraser le profil courant s'il a des modifications non encore
+        // envoyées au serveur (debounce en attente) — évite de réinitialiser
+        // les champs de saisie en cours d'édition.
+        if (k === currentProfile && _saveDebounceTimers[k]) return;
+        profiles[k] = d.profiles[k];
+      });
       if (profiles['real']) profiles['real'].name = '📋 Résultats Réels';
       if (profiles['ia']) profiles['ia'].name = '🤖 Résultat IA';
       _profilesVersion++;
@@ -5219,7 +5225,13 @@ function _withFocusPreserved(renderFn) {
     const restored = document.querySelector('[data-field-key="' + CSS.escape(key) + '"]');
     if (restored) {
       restored.focus({ preventScroll: true });
-      if (restored.type !== 'number') {
+      if (restored.type === 'number') {
+        // setSelectionRange n'est pas supporté sur type=number — réassigner la
+        // valeur force le curseur en fin sans déclencher oninput (affectation JS).
+        const v = restored.value;
+        restored.value = '';
+        restored.value = v;
+      } else {
         try { restored.setSelectionRange(selStart, selEnd); } catch(e) {}
       }
     }
