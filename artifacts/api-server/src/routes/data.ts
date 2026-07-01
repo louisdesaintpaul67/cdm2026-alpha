@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { Response } from "express";
 import { db, usersTable, profilesDataTable, settingsTable, sessionsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
@@ -65,6 +65,23 @@ router.get("/events", async (req, res): Promise<void> => {
     clearInterval(heartbeat);
     sseClients.delete(res);
   });
+});
+
+/**
+ * GET /data/version
+ * Identifiant léger (timestamp epoch ms) de la dernière modification de n'importe
+ * quel profil. Pensé pour être pollé très fréquemment (ex: toutes les 2-3s) à un
+ * coût quasi nul, contrairement à GET /data qui renvoie tous les profils complets.
+ * Le client ne recharge les données complètes que si cette valeur a changé.
+ */
+router.get("/data/version", requireAuth, async (_req, res): Promise<void> => {
+  const rows = await db
+    .select({ updatedAt: profilesDataTable.updatedAt })
+    .from(profilesDataTable)
+    .orderBy(desc(profilesDataTable.updatedAt))
+    .limit(1);
+
+  res.json({ version: rows.length > 0 ? rows[0].updatedAt.getTime() : 0 });
 });
 
 /**

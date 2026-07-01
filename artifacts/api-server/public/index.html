@@ -1305,23 +1305,58 @@ function _getSession() {
   try { return JSON.parse(localStorage.getItem(AUTH_SESSION_KEY) || 'null'); } catch(e) { return null; }
 }
 
+// Un timer de debounce par profil (et pas un seul global) : si l'utilisateur
+// change de profil juste après avoir tapé un score, la sauvegarde en attente
+// du profil précédent n'est pas perdue/écrasée.
+const _saveDebounceTimers = {};
+
 function saveAll() {
   _profilesVersion++;
   try { localStorage.setItem('wc2026v2_profiles', JSON.stringify(profiles)); } catch(e){}
   try { localStorage.setItem('wc2026v2_current', currentProfile); } catch(e){}
-  // Sauvegarde en DB (fire-and-forget)
+
+  // Sauvegarde en DB — débouncée (1s) pour éviter une requête PUT à chaque
+  // frappe (avant : une écriture DB par caractère saisi). On capture la clé du
+  // profil au moment de l'appel : si l'utilisateur change de profil avant que
+  // le timer se déclenche, c'est quand même le bon profil qui est envoyé.
   const _s = _getSession();
-  // Users can only save their own profile. Admin can save any key (incl. real/ia).
-  const canSave = _s?.token && currentProfile && profiles[currentProfile] &&
-    (isAdmin() || currentProfile === _s.pseudo);
-  if (canSave) {
-    fetch('/api/data/' + encodeURIComponent(currentProfile), {
-      method: 'PUT',
-      headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + _s.token},
-      body: JSON.stringify(profiles[currentProfile])
-    }).catch(() => {});
-  }
+  const _profileKey = currentProfile;
+  const canSave = _s?.token && _profileKey && profiles[_profileKey] &&
+    (isAdmin() || _profileKey === _s.pseudo);
+  if (!canSave) return;
+
+  if (_saveDebounceTimers[_profileKey]) clearTimeout(_saveDebounceTimers[_profileKey]);
+  _saveDebounceTimers[_profileKey] = setTimeout(() => {
+    delete _saveDebounceTimers[_profileKey];
+    _pushProfileToServer(_profileKey);
+  }, 1000);
 }
+
+function _pushProfileToServer(profileKey, keepalive) {
+  const sess = _getSession();
+  if (!sess?.token || !profiles[profileKey]) return;
+  fetch('/api/data/' + encodeURIComponent(profileKey), {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + sess.token},
+    body: JSON.stringify(profiles[profileKey]),
+    keepalive: !!keepalive
+  }).catch(() => {});
+}
+
+// Filet de sécurité : si l'onglet est fermé/masqué moins d'1s après une
+// saisie, on force l'envoi immédiat des sauvegardes encore en attente au lieu
+// d'attendre le timer (qui ne se déclencherait jamais après fermeture de la page).
+function _flushPendingSaves() {
+  Object.keys(_saveDebounceTimers).forEach(key => {
+    clearTimeout(_saveDebounceTimers[key]);
+    delete _saveDebounceTimers[key];
+    _pushProfileToServer(key, true); // keepalive: la requête survit à la fermeture de l'onglet
+  });
+}
+window.addEventListener('beforeunload', _flushPendingSaves);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') _flushPendingSaves();
+});
 
 // Nettoie les profils locaux : supprime les doublons (même clé normalisée), garde le plus complet,
 // et supprime les profils vides qui n'appartiennent pas à la session courante.
@@ -5149,13 +5184,62 @@ function initSSE() {
       }
     } catch(err) {}
   };
-  // EventSource auto-reconnecte; le poll de 30s sert de filet de sécurité
+  // Reconnexion active en cas de coupure (Render free peut fermer les connexions
+  // longue durée sans prévenir) — on ne compte plus uniquement sur le comportement
+  // natif d'EventSource.
+  es.onerror = () => {
+    try { es.close(); } catch(e) {}
+    if (window._sseSource === es) window._sseSource = null;
+    if (_getSession()?.token) setTimeout(initSSE, 3000);
+  };
+}
+
+// ── SYNCHRONISATION TEMPS RÉEL ─────────────────────────────────────────────
+// Combine SSE (quasi-instantané) + poll léger de la "version" (6s, requête
+// minuscule) + poll complet de secours (60s) au cas où les deux premiers
+// échoueraient. Doit être appelé partout où une session devient active :
+// après login/register (_enterApp) ET après restauration de session au
+// rechargement de la page (checkSession).
+let _lastKnownVersion = 0;
+let _versionPollInterval = null;
+
+function _startLiveSync() {
+  initSSE();
+
+  if (_versionPollInterval) clearInterval(_versionPollInterval);
+  _versionPollInterval = setInterval(async () => {
+    const _s = _getSession();
+    if (!_s?.token) { clearInterval(_versionPollInterval); _versionPollInterval = null; return; }
+    try {
+      const r = await fetch('/api/data/version', { headers: { 'Authorization': 'Bearer ' + _s.token } });
+      if (!r.ok) return;
+      const { version } = await r.json();
+      if (version && version !== _lastKnownVersion) {
+        _lastKnownVersion = version;
+        await loadAllFromAPI();
+        updateProfileUI();
+        renderCurrentTab();
+      }
+    } catch(e) {}
+  }, 6000);
+
+  // Filet de sécurité en cas d'échec simultané du SSE ET du poll léger
+  // (scénario rare) — fréquence réduite car ce n'est qu'un ultime recours.
+  if (window._profilePollInterval) clearInterval(window._profilePollInterval);
+  window._profilePollInterval = setInterval(() => {
+    if (!_getSession()?.token) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; return; }
+    loadAllFromAPI().then(() => {
+      updateProfileUI();
+      renderCurrentTab();
+    }).catch(() => {});
+  }, 60000);
 }
 
 function doLogout() {
   try { localStorage.removeItem(AUTH_SESSION_KEY); } catch(e) {}
   if (window._sseSource) { try { window._sseSource.close(); } catch(e) {} window._sseSource = null; }
   if (window._profilePollInterval) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; }
+  if (_versionPollInterval) { clearInterval(_versionPollInterval); _versionPollInterval = null; }
   document.getElementById('authOverlay').classList.remove('hidden');
   switchAuthTab('login');
 }
@@ -5193,17 +5277,8 @@ function _enterApp(pseudo, emoji, token, role, userId) {
     updateProfileUI();
     renderCurrentTab();
   }).catch(() => { updateProfileUI(); renderCurrentTab(); });
-  // SSE pour les mises à jour en temps réel; poll toutes les 30s comme filet de sécurité
-  initSSE();
-  if (window._profilePollInterval) clearInterval(window._profilePollInterval);
-  window._profilePollInterval = setInterval(() => {
-    if (!_getSession()?.token) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; return; }
-    if (document.visibilityState === 'hidden') return;
-    loadAllFromAPI().then(() => {
-      updateProfileUI();
-      renderCurrentTab();
-    }).catch(() => {});
-  }, 30000);
+  // Synchro temps réel : SSE (reconnexion auto) + poll léger 6s + poll complet 60s
+  _startLiveSync();
 }
 
 async function _apiAvailable() {
@@ -5357,6 +5432,12 @@ loadAll();
       loadAllFromAPI().then(() => {
         updateProfileUI();
         renderCurrentTab();
+        // BUGFIX : sans cet appel, la synchro temps réel (SSE + poll) n'était
+        // jamais démarrée quand la session était restaurée depuis le localStorage
+        // (rechargement de page, nouvel onglet, appli rouverte) — seule une
+        // connexion fraîche via _enterApp() (login/register) l'activait. C'est
+        // pourquoi les mises à jour n'apparaissaient qu'après un F5 manuel.
+        _startLiveSync();
       }).catch(() => {});
     }
   } catch(e) {}
