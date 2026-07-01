@@ -5219,7 +5219,9 @@ function _withFocusPreserved(renderFn) {
     const restored = document.querySelector('[data-field-key="' + CSS.escape(key) + '"]');
     if (restored) {
       restored.focus({ preventScroll: true });
-      try { restored.setSelectionRange(selStart, selEnd); } catch(e) {}
+      if (restored.type !== 'number') {
+        try { restored.setSelectionRange(selStart, selEnd); } catch(e) {}
+      }
     }
   }
 }
