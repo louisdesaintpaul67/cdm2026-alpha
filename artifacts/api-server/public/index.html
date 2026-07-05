@@ -3762,9 +3762,17 @@ function renderStandings(group) {
     <span class="tag tag-gold">■ *</span> Meilleur 3ème &nbsp;
     <span class="tag tag-red">■</span> Éliminé
   </div>`;
-  // Ne reconstruire le DOM que si le contenu a réellement changé — évite le
-  // clignotement des lignes au hover lors d'un re-render SSE sans changement.
-  if (cont.innerHTML !== html) cont.innerHTML = html;
+  // Ne reconstruire le DOM que si le contenu a réellement changé. On compare
+  // à une copie JS gardée en mémoire (propriété expando sur l'élément), PAS à
+  // cont.innerHTML : le navigateur re-sérialise le HTML différemment de ce
+  // qu'on lui a donné (ex. "&nbsp;" redevient un espace insécable littéral),
+  // donc une comparaison contre le DOM est presque toujours fausse et
+  // provoquait une reconstruction — et le clignotement au hover — à chaque
+  // passage, même sans changement réel de données.
+  if (cont._lastRenderedHtml !== html) {
+    cont.innerHTML = html;
+    cont._lastRenderedHtml = html;
+  }
 }
 
 // --- Phase finale ---
