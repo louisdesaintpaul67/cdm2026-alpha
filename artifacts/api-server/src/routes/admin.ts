@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { db, usersTable, settingsTable, profilesDataTable, sessionsTable } from "@workspace/db";
 import { eq, ne } from "drizzle-orm";
 import { requireAdmin, AuthRequest } from "../middlewares/auth";
+import { broadcastEvent } from "./data";
 
 const GENERIC_PASSWORD = "2026";
 
@@ -151,6 +152,7 @@ router.put("/admin/locks/all", requireAdmin, async (req, res): Promise<void> => 
     await db.insert(settingsTable).values({ key: settingKey, value: settingValue });
   }
 
+  broadcastEvent({ type: "lock-update" });
   res.json({ success: true });
 });
 
@@ -178,6 +180,7 @@ router.put("/admin/users/:id/locks", requireAdmin, async (req, res): Promise<voi
     await db.insert(profilesDataTable).values({ profileKey: pseudo, userId: id, data: { [type]: locked } });
   }
 
+  broadcastEvent({ type: "lock-update" });
   res.json({ success: true });
 });
 
@@ -201,6 +204,12 @@ router.put("/admin/profiles/:key/locks", requireAdmin, async (req, res): Promise
   } else {
     await db.insert(profilesDataTable).values({ profileKey: key, userId: null, data: { [type]: locked } });
   }
+  broadcastEvent({ type: "lock-update" });
+  res.json({ success: true });
+});
+
+router.post("/admin/force-idle", requireAdmin, async (req, res): Promise<void> => {
+  broadcastEvent({ type: "force-idle" });
   res.json({ success: true });
 });
 
@@ -225,13 +234,13 @@ router.put("/admin/users/:id/pseudo", requireAdmin, async (req: AuthRequest, res
   if (userRows.length === 0) { res.status(404).json({ error: "Utilisateur introuvable" }); return; }
   const current = userRows[0];
 
-  if (current.pseudo.toLowerCase() === lower) {
+  if (current.pseudo === trimmed) {
     res.json({ success: true, pseudo: trimmed });
     return;
   }
 
   const existing = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.pseudo, trimmed)).limit(1);
-  if (existing.length > 0) {
+  if (existing.length > 0 && current.pseudo.toLowerCase() !== lower) {
     res.status(409).json({ error: "Ce pseudo est déjà utilisé." });
     return;
   }

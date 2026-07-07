@@ -4230,10 +4230,20 @@ function updateBonusStats() {
 }
 
 // --- Classement général ---
+function _lbSetHtml(cont, html) {
+  // Ne touche au DOM que si le HTML a réellement changé par rapport à la
+  // dernière valeur qu'on a nous-même assignée (copie JS en expando, jamais
+  // lue depuis cont.innerHTML) — évite de casser le hover à chaque appel.
+  if (cont._lastRenderedHtml !== html) {
+    cont.innerHTML = html;
+    cont._lastRenderedHtml = html;
+  }
+}
+
 function renderLeaderboard() {
   const cont=document.getElementById('leaderboardContent');
   // Cache : ne recalcule que si les données ont changé depuis le dernier rendu
-  if (_lbCache.version === _profilesVersion && _lbCache.rows) { cont.innerHTML = _lbCache.rows; return; }
+  if (_lbCache.version === _profilesVersion && _lbCache.rows) { _lbSetHtml(cont, _lbCache.rows); return; }
   const refGoals=computeTotalGoals('real');
 
   // Pré-calcul O(N) des buts sur matchs joués pour éviter O(N²) dans computePoints
@@ -4276,7 +4286,7 @@ function renderLeaderboard() {
     .sort((a,b)=>b.total-a.total||Math.abs(a.playedGoals-refGoals)-Math.abs(b.playedGoals-refGoals));
 
   if(scores.length===0){
-    cont.innerHTML='<div class="empty-state"><div class="big">🏆</div>Créez des profils pour voir le classement</div>';
+    _lbSetHtml(cont, '<div class="empty-state"><div class="big">🏆</div>Créez des profils pour voir le classement</div>');
     return;
   }
 
@@ -4304,7 +4314,7 @@ function renderLeaderboard() {
   }).join('');
 
   _lbCache = { version: _profilesVersion, rows };
-  cont.innerHTML = rows;
+  _lbSetHtml(cont, rows);
   _lbGoalsCache = null;
 }
 
@@ -4458,8 +4468,11 @@ async function adminToggleAllowGeneration(currentlyAllowed) {
 async function adminUserLock(userId, pseudo, type, locked) {
   const d = await adminApiCall('PUT', '/admin/users/' + userId + '/locks', {type, locked});
   if (d.success) {
-    // Always reload from API to get the authoritative lock state (profile may not exist locally yet)
     await loadAllFromAPI();
+    // Invalider le fingerprint pour forcer la reconstruction du panneau admin
+    // (le verrou changé appartient à un autre profil, absent du fingerprint habituel)
+    const cont = document.getElementById('settingsContent');
+    if (cont) cont.dataset.renderFp = '';
     renderSettings();
   } else alert('Erreur : ' + (d.error || 'inconnue'));
 }
@@ -4469,8 +4482,15 @@ async function adminSystemProfileLock(profileKey, type, locked) {
   const d = await adminApiCall('PUT', '/admin/profiles/' + profileKey + '/locks', {type, locked});
   if (d.success) {
     await loadAllFromAPI();
+    const cont = document.getElementById('settingsContent');
+    if (cont) cont.dataset.renderFp = '';
     renderSettings();
   } else alert('Erreur : ' + (d.error || 'inconnue'));
+}
+
+async function adminForceIdle() {
+  const d = await adminApiCall('POST', '/admin/force-idle', {});
+  if (!d.success) alert('Erreur : ' + (d.error || 'inconnue'));
 }
 
 async function loadAllFromAPI() {
@@ -4627,6 +4647,13 @@ async function renderAdminSettings(cont) {
     </button>`;
   });
   html += '</div></div>';
+
+  // ── 1b. SESSION IDLE ──────────────────────────────────────────
+  html += '<div class="settings-section">';
+  html += '<div class="settings-section-title">⏸ Gestion des sessions</div>';
+  html += `<p style="font-size:.78rem;color:var(--text3);margin-bottom:12px">Gèle immédiatement la session de tous les utilisateurs actifs (coupe leur connexion à la DB). Les utilisateurs non connectés à cet instant ne sont pas affectés.</p>`;
+  html += `<button class="btn-set btn-set-danger" style="padding:8px 16px;font-size:.82rem" onclick="adminForceIdle()">⏸ Suspendre toutes les sessions actives</button>`;
+  html += '</div>';
 
   // ── 2. VERROUS GLOBAUX ────────────────────────────────────────
   html += '<div class="settings-section">';
@@ -5317,6 +5344,12 @@ function initSSE() {
         const _s = _getSession();
         if (d.sourceUserId != null && _s?.userId != null && d.sourceUserId === _s.userId) return;
         loadAllFromAPI().then(changed => { if (changed) _renderAfterSync(); }).catch(() => {});
+      } else if (d.type === 'lock-update') {
+        // Un verrou a changé côté admin — recharger les données et re-rendre
+        // sans filtre sourceUserId (tout le monde doit avoir l'état à jour immédiatement)
+        loadAllFromAPI().then(changed => { if (changed) _renderAfterSync(); }).catch(() => {});
+      } else if (d.type === 'force-idle') {
+        _triggerIdleFreeze();
       }
     } catch(err) {}
   };
@@ -5339,8 +5372,39 @@ function initSSE() {
 let _lastKnownVersion = 0;
 let _versionPollInterval = null;
 
+// ── IDLE FREEZE ────────────────────────────────────────────────────────────
+// Gèle le site après 30 minutes de session pour épargner la DB.
+// Non-persistant : seuls les clients actifs à ce moment sont concernés.
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+let _idleTimer = null;
+
+function _startIdleTimer() {
+  if (_idleTimer) clearTimeout(_idleTimer);
+  _idleTimer = setTimeout(_triggerIdleFreeze, IDLE_TIMEOUT_MS);
+}
+
+function _triggerIdleFreeze() {
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  // Couper tous les canaux de communication avec la DB
+  if (window._sseSource) { try { window._sseSource.close(); } catch(e) {} window._sseSource = null; }
+  if (_versionPollInterval) { clearInterval(_versionPollInterval); _versionPollInterval = null; }
+  if (window._profilePollInterval) { clearInterval(window._profilePollInterval); window._profilePollInterval = null; }
+  // Annuler les sauvegardes en attente (debounce)
+  Object.keys(_saveDebounceTimers).forEach(k => { clearTimeout(_saveDebounceTimers[k]); delete _saveDebounceTimers[k]; });
+  // Afficher l'overlay
+  const overlay = document.getElementById('idleOverlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function resumeFromIdle() {
+  const overlay = document.getElementById('idleOverlay');
+  if (overlay) overlay.style.display = 'none';
+  _startLiveSync();
+}
+
 function _startLiveSync() {
   initSSE();
+  _startIdleTimer();
 
   if (_versionPollInterval) clearInterval(_versionPollInterval);
   _versionPollInterval = setInterval(async () => {
@@ -5581,5 +5645,16 @@ renderGroupMatches('A');
 renderGroupTabs('standingsGroupTabs', g=>renderStandings(g), 'A');
 document.getElementById('topbarInfo').textContent='🌍 48 équipes • 12 groupes';
 </script>
+
+<!-- ── IDLE FREEZE OVERLAY ───────────────────────────────────────────────── -->
+<!-- Affiché après 30 min de session ou sur commande admin. Non-persistant.  -->
+<div id="idleOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg,#0f1117);flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;gap:18px">
+  <div style="font-size:2.8rem;line-height:1">⏸</div>
+  <h2 style="color:var(--text,#eef0f6);font-size:1.2rem;font-weight:700;margin:0">Session suspendue</h2>
+  <p style="color:var(--text2,#8892a4);font-size:.875rem;margin:0;max-width:300px;line-height:1.6">
+    Pour préserver les ressources, votre connexion a été mise en pause après 30 minutes.<br>Vos pronostics sont sauvegardés.
+  </p>
+  <button onclick="resumeFromIdle()" style="background:var(--gold,#f0b429);color:#000;border:none;border-radius:8px;padding:13px 36px;font-size:1rem;font-weight:700;cursor:pointer;margin-top:6px">▶ Reprendre</button>
+</div>
 </body>
 </html>

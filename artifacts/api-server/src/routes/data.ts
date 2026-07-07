@@ -9,8 +9,8 @@ const router = Router();
 // ── SSE ──────────────────────────────────────────────────────────────────────
 const sseClients = new Set<Response>();
 
-function broadcastUpdate(key: string): void {
-  const msg = `data: ${JSON.stringify({ type: "update", key })}\n\n`;
+export function broadcastEvent(payload: Record<string, unknown>): void {
+  const msg = `data: ${JSON.stringify(payload)}\n\n`;
   for (const client of sseClients) {
     try {
       client.write(msg);
@@ -18,6 +18,10 @@ function broadcastUpdate(key: string): void {
       sseClients.delete(client);
     }
   }
+}
+
+function broadcastUpdate(key: string, sourceUserId?: number): void {
+  broadcastEvent({ type: "update", key, sourceUserId });
 }
 
 /**
@@ -178,7 +182,7 @@ router.put("/data/:key", requireAuth, async (req: AuthRequest, res): Promise<voi
   }
 
   res.json({ success: true });
-  broadcastUpdate(key);
+  broadcastUpdate(key, req.userId);
 });
 
 /**
