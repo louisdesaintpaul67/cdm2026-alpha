@@ -4351,8 +4351,11 @@ async function adminDeleteUser(id, pseudo) {
 
 async function adminApproveUser(id, pseudo) {
   const d = await adminApiCall('PUT', '/admin/users/' + id + '/approve', null);
-  if (d.success) { renderSettings(); }
-  else alert('Erreur : ' + (d.error || 'inconnue'));
+  if (d.success) {
+    const cont = document.getElementById('settingsContent');
+    if (cont) cont.dataset.renderFp = '';
+    renderSettings();
+  } else alert('Erreur : ' + (d.error || 'inconnue'));
 }
 
 let _adminSelectedEmoji = null;
@@ -5348,6 +5351,14 @@ function initSSE() {
         // Un verrou a changé côté admin — recharger les données et re-rendre
         // sans filtre sourceUserId (tout le monde doit avoir l'état à jour immédiatement)
         loadAllFromAPI().then(changed => { if (changed) _renderAfterSync(); }).catch(() => {});
+      } else if (d.type === 'settings-update') {
+        // Un réglage admin a changé (inscription, génération, approbation) :
+        // seul le panneau admin est concerné — forcer son rechargement si ouvert.
+        if (isAdmin()) {
+          const cont = document.getElementById('settingsContent');
+          if (cont) cont.dataset.renderFp = '';
+          renderSettings();
+        }
       } else if (d.type === 'force-idle') {
         _triggerIdleFreeze();
       }

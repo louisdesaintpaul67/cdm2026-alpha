@@ -63,6 +63,7 @@ router.delete("/admin/users/:id", requireAdmin, async (req: AuthRequest, res): P
   await db.delete(profilesDataTable).where(eq(profilesDataTable.profileKey, pseudo));
   await db.delete(usersTable).where(eq(usersTable.id, id));
 
+  broadcastEvent({ type: "update", key: pseudo });
   res.json({ success: true });
 });
 
@@ -72,6 +73,7 @@ router.put("/admin/users/:id/approve", requireAdmin, async (req, res): Promise<v
   if (isNaN(id)) { res.status(400).json({ error: "ID invalide" }); return; }
 
   await db.update(usersTable).set({ pending: false }).where(eq(usersTable.id, id));
+  broadcastEvent({ type: "settings-update" });
   res.json({ success: true });
 });
 
@@ -113,6 +115,7 @@ router.put("/admin/settings", requireAdmin, async (req, res): Promise<void> => {
     await db.insert(settingsTable).values({ key, value });
   }
 
+  broadcastEvent({ type: "settings-update" });
   res.json({ success: true });
 });
 
@@ -252,6 +255,7 @@ router.put("/admin/users/:id/pseudo", requireAdmin, async (req: AuthRequest, res
 
   await db.update(usersTable).set({ pseudo: trimmed }).where(eq(usersTable.id, id));
 
+  broadcastEvent({ type: "update", key: trimmed });
   res.json({ success: true, pseudo: trimmed });
 });
 
