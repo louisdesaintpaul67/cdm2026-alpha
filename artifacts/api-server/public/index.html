@@ -4648,13 +4648,6 @@ async function renderAdminSettings(cont) {
   });
   html += '</div></div>';
 
-  // ── 1b. SESSION IDLE ──────────────────────────────────────────
-  html += '<div class="settings-section">';
-  html += '<div class="settings-section-title">⏸ Gestion des sessions</div>';
-  html += `<p style="font-size:.78rem;color:var(--text3);margin-bottom:12px">Gèle immédiatement la session de tous les utilisateurs actifs (coupe leur connexion à la DB). Les utilisateurs non connectés à cet instant ne sont pas affectés.</p>`;
-  html += `<button class="btn-set btn-set-danger" style="padding:8px 16px;font-size:.82rem" onclick="adminForceIdle()">⏸ Suspendre toutes les sessions actives</button>`;
-  html += '</div>';
-
   // ── 2. VERROUS GLOBAUX ────────────────────────────────────────
   html += '<div class="settings-section">';
   html += '<div class="settings-section-title">🔒 Verrous globaux (tous les joueurs)</div>';
@@ -4798,7 +4791,7 @@ async function renderAdminSettings(cont) {
     // --- Général : toggle ---
     html += '<div style="border-top:1px solid var(--border);padding-top:14px">';
     html += '<div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:12px;text-transform:uppercase;letter-spacing:.04em">Général :</div>';
-    html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
       <div>
         <div style="font-size:.85rem;font-weight:600;color:var(--text);margin-bottom:2px">Autoriser la génération de score réaliste</div>
         <div style="font-size:.75rem;color:var(--text3)">Permet aux joueurs d'utiliser les boutons Générer dans leurs paramètres.</div>
@@ -4808,6 +4801,13 @@ async function renderAdminSettings(cont) {
         title="${_allowGen ? 'Désactiver' : 'Activer'}">
         <span style="position:absolute;top:3px;left:${_allowGen ? '26px' : '3px'};width:22px;height:22px;border-radius:50%;background:#fff;transition:left .2s;display:block"></span>
       </button>
+    </div>`;
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div>
+        <div style="font-size:.85rem;font-weight:600;color:var(--text);margin-bottom:2px">Suspendre toutes les sessions actives</div>
+        <div style="font-size:.75rem;color:var(--text3)">Gèle immédiatement la connexion DB de tous les utilisateurs connectés à cet instant. Non-persistant.</div>
+      </div>
+      <button class="btn-set btn-set-danger" style="flex-shrink:0;padding:7px 14px;font-size:.8rem" onclick="adminForceIdle()">⏸ Suspendre</button>
     </div>`;
     html += '</div>';
 
@@ -5382,6 +5382,20 @@ function _startIdleTimer() {
   if (_idleTimer) clearTimeout(_idleTimer);
   _idleTimer = setTimeout(_triggerIdleFreeze, IDLE_TIMEOUT_MS);
 }
+
+// Vrai idle : toute interaction remet le compteur à zéro.
+// Throttlé à 1 reset/minute max pour éviter l'overhead.
+// mousemove exclu intentionnellement — seules les vraies interactions comptent.
+let _idleResetThrottle = null;
+function _onUserActivity() {
+  if (_idleTimer === null) return; // déjà freezé, on ignore
+  if (_idleResetThrottle) return;
+  _idleResetThrottle = setTimeout(() => { _idleResetThrottle = null; }, 60000);
+  _startIdleTimer();
+}
+['click', 'keydown', 'touchstart', 'scroll'].forEach(ev =>
+  document.addEventListener(ev, _onUserActivity, { passive: true })
+);
 
 function _triggerIdleFreeze() {
   if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
